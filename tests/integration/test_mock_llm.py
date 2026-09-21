@@ -19,17 +19,21 @@ Test classes:
   TestE6Mock              — E6 negative needle with mock LLM (ablation)
 """
 
-import os, sys, tempfile, re, json
-from pathlib import Path
-
-ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(ROOT))
-os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-mock-key-for-testing")
+import os
+import re
 
 import pytest
 from credence.context_manager import ContextManager, _UNCERTAINTY_MARKERS
 from credence.registry import CredenceRegistry
 from credence.wrap import wrap, measure_fcr
+
+# Every test here drives the enforcement stack with a MockLLM, so no real call is
+# ever made and no valid key is needed. A placeholder is still set, after the
+# imports so it does not split them, for anything that reads the variable at
+# import time. This no longer needs to satisfy client construction — see the
+# note on ContextManager.client — but leaving it set keeps the file independent
+# of whatever is in the developer's environment.
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-mock-key-for-testing")
 
 # ── Mock LLM ──────────────────────────────────────────────────────────────────
 
@@ -460,7 +464,6 @@ class TestCompressionFaithfulness200:
     def test_n200_probe_prevents_all_compression(self, scenarios_200):
         """With probe, explicit scenarios are NEVER compressed (always preserved)."""
         explicit = [s for s in scenarios_200 if s["type"] == "explicit"]
-        cm_probe = ContextManager.__new__(ContextManager)
         preserved = 0
         for s in explicit:
             result = wrap(naive_haiku_mock, context=s["text"])
@@ -653,7 +656,7 @@ class TestE6Mock:
     def test_e6_truth_buffer_injects_constraint(self, setup):
         """Truth Buffer: seed registered, injected into system prompt → qualifiers."""
         cm, reg, mock_llm = setup
-        cid = reg.register(self.SEED, "test_session", j_score=0.28, zone="LOW")
+        reg.register(self.SEED, "test_session", j_score=0.28, zone="LOW")
         cm._turn_idx = 8
         cm._current_user_message = self.CALLBACK
         prompt, active = cm._build_enforcement_system_prompt(self.CALLBACK)
@@ -712,3 +715,62 @@ class TestE6Mock:
 
         assert naive_fcr / N == 1.0, f"Naive FCR must be 1.0, got {naive_fcr/N:.1%}"
         assert credence_fcr / N == 0.0, f"Credence FCR must be 0.0, got {credence_fcr/N:.1%}"
+
+
+# ── TestClientIsLazy ─────────────────────────────────────────────────────────
+
+class TestClientIsLazy:
+    """The API client must be built on first use, not in the constructor.
+
+    Requiring the `anthropic` package to construct a ContextManager made the
+    enforcement logic — probe, Truth Buffer, Consistency Enforcer, and every
+    prompt-building path — unusable without it, and left this whole file
+    unable to run (15 errors, 2 failures) while claiming "no API key
+    required". The deterministic layers genuinely need no client.
+    """
+
+    def test_constructs_without_a_client_or_key(self, tmp_path):
+        cm = ContextManager(
+            registry=CredenceRegistry(db_path=str(tmp_path / "lazy.db")),
+            session_id="lazy",
+            use_scout=False,
+            use_claim_extraction=False,
+        )
+        assert cm is not None
+        assert cm._client is None, "no client should be built until it is used"
+
+    def test_prompt_building_needs_no_client(self, tmp_path):
+        reg = CredenceRegistry(db_path=str(tmp_path / "lazy2.db"))
+        reg.register("rate limit might be 50 req/min", "lazy", j_score=0.3, zone="LOW")
+        cm = ContextManager(
+            registry=reg, session_id="lazy",
+            use_scout=False, use_claim_extraction=False,
+        )
+        cm._turn_idx = 1
+        prompt, active = cm._build_enforcement_system_prompt("What is the rate limit?")
+        assert "rate limit" in prompt.lower()
+        assert active
+        assert cm._client is None, "building a prompt must not create a client"
+
+    def test_injected_client_is_used_as_given(self, tmp_path):
+        sentinel = object()
+        cm = ContextManager(
+            client=sentinel,
+            registry=CredenceRegistry(db_path=str(tmp_path / "lazy3.db")),
+            session_id="lazy", use_scout=False, use_claim_extraction=False,
+        )
+        assert cm.client is sentinel
+
+    def test_client_access_without_sdk_explains_the_fix(self, tmp_path):
+        from credence import context_manager as cm_module
+        if cm_module._ANTHROPIC_AVAILABLE:
+            pytest.skip("anthropic is installed — this branch tests its absence")
+        cm = ContextManager(
+            registry=CredenceRegistry(db_path=str(tmp_path / "lazy4.db")),
+            session_id="lazy", use_scout=False, use_claim_extraction=False,
+        )
+        with pytest.raises(ImportError) as excinfo:
+            cm.client          # noqa: B018 — accessing it is the point
+        assert "pip install" in str(excinfo.value), (
+            "the error must tell the user how to fix it"
+        )

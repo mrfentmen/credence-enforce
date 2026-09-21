@@ -44,7 +44,8 @@ def run_demo() -> None:
 
     try:
         from credence.temporal_patterns import scan_temporal, scan_domain_assignments, TEMPORAL_J_SCORES
-        from credence.mcp_server import _scan_output, _get_registry, _expand_tokens, _CE_STOPWORDS
+        from credence.mcp_server import _scan_output, _get_registry
+        from credence.matching import evaluate_constraints
 
         reg = _get_registry()
         SESSION = "credence_demo"
@@ -123,16 +124,13 @@ class StripeClient:
         time.sleep(0.4)
 
         # ── gate: blocks write ──────────────────────────────────────────────
+        # Scored by credence.matching so the demo shows what the gate actually
+        # does. It previously carried its own copy of the overlap rule, which
+        # meant the smoke test a stranger runs first could disagree with the
+        # enforcement they would get.
         uncertain = reg.list_uncertain(SESSION)
         action = "write stripe_client rate limit token expiry timeout version"
-        raw    = set(re.sub(r"[^\w\s]", " ", action.lower()).split()) - _CE_STOPWORDS
-        tokens = _expand_tokens(raw)
-        blocked = [
-            c for c in uncertain
-            if len(tokens & _expand_tokens(
-                set(re.sub(r"[^\w\s]", " ", c["content"].lower()).split()) - _CE_STOPWORDS
-            )) >= 2
-        ]
+        blocked = evaluate_constraints(action, uncertain)
 
         _hr()
         print("  ⚙  credence_gate  →  proceed: False")
@@ -152,13 +150,10 @@ class StripeClient:
         time.sleep(0.3)
 
         confirm = "confirmed rate limit is 100 per stripe docs"
-        confirm_tokens = set(re.sub(r"[^\w\s]", " ", confirm.lower()).split()) - _CE_STOPWORDS
         verified = 0
-        for c in reg.list_uncertain(SESSION):
-            c_tokens = set(re.sub(r"[^\w\s]", " ", c["content"].lower()).split()) - _CE_STOPWORDS
-            if len(confirm_tokens & c_tokens) >= 2:
-                reg.verify(c["constraint_id"], "confirmed: stripe.com/docs")
-                verified += 1
+        for c in evaluate_constraints(confirm, reg.list_uncertain(SESSION)):
+            reg.verify(c["constraint_id"], "confirmed: stripe.com/docs")
+            verified += 1
 
         print(f"  ⚙  credence_autoverify → {verified} constraint(s) verified")
         print()
@@ -166,12 +161,7 @@ class StripeClient:
 
         # ── gate re-check ───────────────────────────────────────────────────
         uncertain_after = reg.list_uncertain(SESSION)
-        blocked_after = [
-            c for c in uncertain_after
-            if len(tokens & _expand_tokens(
-                set(re.sub(r"[^\w\s]", " ", c["content"].lower()).split()) - _CE_STOPWORDS
-            )) >= 2
-        ]
+        blocked_after = evaluate_constraints(action, uncertain_after)
 
         _hr()
         remaining = len(uncertain_after)
@@ -197,8 +187,8 @@ class StripeClient:
         print("  Every value that flows from conversation into code")
         print("  is tracked and must be verified before it ships.")
         print()
-        print('  Install:  pip install "credence-guard[mcp]"')
-        print("  Docs:     github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai")
+        print("  Install:  pip install credence-enforce")
+        print("  Docs:     github.com/mrfentmen/credence-enforce")
         _hr("═")
 
     finally:

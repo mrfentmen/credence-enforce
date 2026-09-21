@@ -32,7 +32,7 @@ Resources (passive, epistemic:// URI scheme):
     epistemic://session/{session_id}/constraint/{id}    — single constraint + trajectory
 
 Install:
-    pip install "credence-guard[mcp]"
+    pip install credence-enforce
     credence-server
 
 No ANTHROPIC_API_KEY or any other key needed.
@@ -52,13 +52,12 @@ except ImportError:
     _FASTMCP_AVAILABLE = False
 
 from .context_manager import (
-    _CE_STOPWORDS,
-    _CE_DOMAIN_SYNONYMS,
     _GTS_NUM_PATTERN,
     _GTS_CODE_BLOCK,
     _GTS_SKIP_PREFIXES,
     _GTS_SENTENCE_SPLIT,
 )
+from .matching import evaluate_constraints
 from .registry import CredenceRegistry
 from .temporal_patterns import scan_temporal, scan_domain_assignments, TEMPORAL_J_SCORES
 
@@ -108,16 +107,54 @@ def _get_registry() -> CredenceRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Synonym-expansion helper (replicates CE logic without a ContextManager)
+# Enforcement decisions — module level, so tests can reach them
 # ---------------------------------------------------------------------------
+#
+# These live outside the @mcp.tool() closures deliberately. `fastmcp` is
+# imported in a try/except and the tools are only registered when it is
+# present, so logic written inside a tool body cannot be called by a test in an
+# environment without it. That is precisely how the gate kept a private, broken
+# matcher for so long: nothing could reach it to check.
+#
+# The tool now only adapts input and output. The decision is a plain function.
 
-def _expand_tokens(tokens: set) -> set:
-    expanded = set(tokens)
-    for t in tokens:
-        cluster = _CE_DOMAIN_SYNONYMS.get(t)
-        if cluster:
-            expanded |= cluster
-    return expanded
+
+def blocking_constraints(
+    tool_name: str, arguments_summary: str, constraints: list[dict]
+) -> list[dict]:
+    """The subset of `constraints` that should block this tool call.
+
+    Delegates to credence.matching.evaluate_constraints — the same scorer the
+    PreToolUse hook and the autoverifier use. A second implementation here
+    could only drift, and it did: see the note in credence_gate.
+
+    Each returned constraint carries `overlap_terms` (the evidence) and
+    `match_reason` ("value" or "terms").
+    """
+    blocking = []
+    for hit in evaluate_constraints(f"{tool_name} {arguments_summary}", constraints):
+        verdict = hit.pop("_verdict")
+        hit["overlap_terms"] = (
+            verdict["shared_values"] + verdict["shared_terms"]
+        )[:6]
+        hit["match_reason"] = verdict["reason"]
+        blocking.append(hit)
+    return blocking
+
+
+def confirmable_constraints(text: str, constraints: list[dict]) -> list[str]:
+    """Ids of constraints that `text` confirms, by the canonical matcher.
+
+    This is the one decision in the system that can turn enforcement OFF — a
+    confirmed constraint is removed from `list_uncertain`, and the gate only
+    blocks on uncertain ones. It must therefore be scored exactly as the gate
+    scores blocking, or a confirmation that the gate would not have honoured
+    can disarm it. One matcher, both directions.
+    """
+    return [
+        c["constraint_id"]
+        for c in evaluate_constraints(text, constraints)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -455,18 +492,16 @@ if _FASTMCP_AVAILABLE:
                 "recommendation":   "PROCEED — no unverified constraints in this session.",
             }
 
-        action_text  = f"{tool_name} {arguments_summary}".lower()
-        raw_tokens   = set(re.sub(r"[^\w\s]", " ", action_text).split()) - _CE_STOPWORDS
-        action_tokens = _expand_tokens(raw_tokens)
-
-        blocking: list[dict] = []
-        for c in uncertain:
-            c_raw    = set(re.sub(r"[^\w\s]", " ", c["content"].lower()).split()) - _CE_STOPWORDS
-            c_tokens = _expand_tokens(c_raw)
-            overlap  = action_tokens & c_tokens
-            if len(overlap) >= 2:
-                c["overlap_terms"] = list(overlap)[:6]
-                blocking.append(c)
+        # Scored by credence.matching — the same implementation the PreToolUse
+        # hook uses. This tool previously carried its own copy of the overlap
+        # rule, and the copy was wrong: it lower-cased before splitting, so
+        # `RATE_LIMIT` stayed one token and never matched the prose terms
+        # "rate"/"limit". With the README's own example it found one shared term
+        # ("100"), needed two, and answered PROCEED — while the hook blocked the
+        # same input. Two gates giving two answers to one question is worse than
+        # either answer, because the answer you get depends on which door the
+        # agent happened to use.
+        blocking = blocking_constraints(tool_name, arguments_summary, uncertain)
 
         if blocking:
             cids = ", ".join(c["constraint_id"] for c in blocking)
@@ -739,11 +774,6 @@ if _FASTMCP_AVAILABLE:
             "as per", "according to", "per the docs", "per docs",
             "i verified", "we verified", "found out", "it turns out",
         })
-        _AUTOVERIFY_STOPWORDS = frozenset({
-            "the", "a", "an", "is", "it", "its", "this", "that", "for",
-            "and", "or", "to", "of", "in", "on", "at", "by", "be", "are",
-        })
-
         text_lower = text.lower()
         has_signal = any(p in text_lower for p in _CONFIRM_PHRASES)
         if not has_signal:
@@ -764,17 +794,17 @@ if _FASTMCP_AVAILABLE:
                 "message":           "Confirmation detected but no unverified constraints in session.",
             }
 
-        text_tokens = set(re.sub(r"[^\w\s]", " ", text_lower).split()) - _AUTOVERIFY_STOPWORDS
-        verified_ids: list[str] = []
-
-        for c in uncertain:
-            c_tokens = set(
-                re.sub(r"[^\w\s]", " ", c["content"].lower()).split()
-            ) - _AUTOVERIFY_STOPWORDS
-            overlap = text_tokens & c_tokens
-            if len(overlap) >= 2:
-                registry.verify(c["constraint_id"], f"auto-verified from: {text[:80]}")
-                verified_ids.append(c["constraint_id"])
+        # Scored by credence.matching, for the same reason as the gate above —
+        # and with more at stake. This tool is what flips a constraint to
+        # VERIFIED, and VERIFIED is what makes the gate allow a write. A
+        # matcher here that is more generous than the gate's silently disarms
+        # enforcement, so "do these two texts concern the same thing?" must have
+        # exactly one answer in the codebase. The stopword set this used to
+        # carry had 20 entries against the gate's ~190, and no synonym or
+        # identifier handling at all.
+        verified_ids = confirmable_constraints(text, uncertain)
+        for cid in verified_ids:
+            registry.verify(cid, f"auto-verified from: {text[:80]}")
 
         n = len(verified_ids)
         return {
@@ -784,7 +814,7 @@ if _FASTMCP_AVAILABLE:
             "message": (
                 f"Auto-verified {n} constraint(s) matching confirmation signal."
                 if n > 0
-                else "Confirmation signal present but no constraints matched (< 2 token overlap)."
+                else "Confirmation signal present but no constraints matched."
             ),
         }
 

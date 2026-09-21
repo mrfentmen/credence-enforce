@@ -33,7 +33,15 @@ Setup (add to your project's .claude/settings.json):
 }
 
 The hook reads the tool call from stdin as JSON (Claude Code hook protocol).
-Session ID is read from CREDENCE_SESSION_ID environment variable.
+
+The session id comes from CREDENCE_SESSION_ID when set, and is otherwise
+derived from the working directory by credence.matching.resolve_session_id()
+— the same derivation observer.py uses. Previously this hook required the
+env var and passed every tool call through when it was unset, which made
+enforcement a silent no-op in the documented default setup.
+
+Overlap scoring lives in credence.matching, so this hook, the observer, and
+the MCP gate all reach the same verdict.
 
 Exit codes:
   0  — proceed (no unverified constraint overlap)
@@ -47,6 +55,8 @@ import json
 import os
 import re
 import sys
+
+from credence.matching import evaluate_constraints, resolve_session_id
 
 
 # ---------------------------------------------------------------------------
@@ -65,31 +75,15 @@ def _log_event(event: dict) -> None:
         return
     try:
         os.makedirs(_EVENTS_DIR, exist_ok=True)
-        event["ts"] = datetime.datetime.utcnow().isoformat() + "Z"
+        event["ts"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         with open(_EVENTS_FILE, "a") as fh:
             fh.write(json.dumps(event) + "\n")
     except Exception:
         pass  # logging must never break the gate
 
-# ---------------------------------------------------------------------------
-# Stopwords excluded from overlap scoring (same set as credence_gate in MCP)
-# ---------------------------------------------------------------------------
-_STOPWORDS = frozenset({
-    "the", "and", "for", "that", "this", "with", "from", "are", "was",
-    "not", "but", "all", "any", "a", "an", "in", "on", "at", "to", "of",
-    "it", "is", "be", "do", "use", "set", "run", "get", "write", "read",
-    "file", "path", "code", "function", "class", "return", "value", "true",
-    "false", "none", "null", "new", "old", "current", "next", "first",
-    "last", "line", "text", "string", "number", "int", "str", "bool",
-})
-
-_MIN_OVERLAP = 2   # minimum non-stopword terms to trigger a block
-
-
-def _tokenise(text: str) -> set[str]:
-    """Lower-case word tokens, strip punctuation, remove stopwords."""
-    words = re.sub(r"[^\w\s]", " ", text.lower()).split()
-    return {w for w in words if w not in _STOPWORDS and len(w) >= 3}
+# Overlap scoring, stopwords, thresholds, and session identity all live in
+# credence/matching.py. This module used to carry its own weaker copy, which
+# is why the demo blocked and real hook invocations did not.
 
 
 def _flatten(obj, depth: int = 0) -> str:
@@ -110,6 +104,11 @@ def main() -> int:
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
+        if not isinstance(payload, dict):
+            # Valid JSON that is not an object (e.g. "[]") carries no tool
+            # call. Treat it as empty rather than raising: a hook must never
+            # turn a tool call into a crash.
+            payload = {}
     except (json.JSONDecodeError, ValueError):
         payload = {}
 
@@ -119,9 +118,9 @@ def main() -> int:
 
     # --- Locate registry ----------------------------------------------------
     db_path    = os.environ.get("CREDENCE_DB", "epistemic_registry.db")
-    session_id = os.environ.get("CREDENCE_SESSION_ID", "")
+    session_id = resolve_session_id()
 
-    if not os.path.exists(db_path) or not session_id:
+    if not os.path.exists(db_path):
         # No registry configured → pass through silently
         return 0
 
@@ -137,19 +136,16 @@ def main() -> int:
         return 0
 
     # --- Overlap check -------------------------------------------------------
-    action_tokens = _tokenise(action_text)
     blocking = []
-
-    for c in uncertain:
-        constraint_tokens = _tokenise(c.get("content", ""))
-        overlap = action_tokens & constraint_tokens
-        if len(overlap) >= _MIN_OVERLAP:
-            blocking.append({
-                "constraint_id": c["constraint_id"],
-                "content":       c["content"][:120],
-                "overlap":       sorted(overlap)[:6],
-                "zone":          c.get("zone", "UNKNOWN"),
-            })
+    for c in evaluate_constraints(action_text, uncertain):
+        verdict = c["_verdict"]
+        blocking.append({
+            "constraint_id": c["constraint_id"],
+            "content":       c["content"][:120],
+            "overlap":       verdict["shared_values"] or verdict["shared_terms"][:6],
+            "reason":        verdict["reason"],
+            "zone":          c.get("zone", "UNKNOWN"),
+        })
 
     if not blocking:
         _log_event({
@@ -162,9 +158,8 @@ def main() -> int:
 
     # --- Block and warn ------------------------------------------------------
     def _clean(s: str) -> str:
-        import re as _re
-        s = _re.sub(r'^\[stale:[^\]]+\]\s*', '', s)
-        s = _re.sub(r'^\[AI-generated:[^\]]+\]\s*', '', s)
+        s = re.sub(r'^\[stale:[^\]]+\]\s*', '', s)
+        s = re.sub(r'^\[AI-generated:[^\]]+\]\s*', '', s)
         return s
     reasons = " | ".join(_clean(b["content"])[:100] for b in blocking[:2])
     lines = [

@@ -1,91 +1,77 @@
+#!/usr/bin/env python3
 """
-examples/quickstart.py — Five-minute EpistemicTag integration
+quickstart.py — Credence in 30 lines, no API key, no MCP server.
 
-Three steps:
-  1. Calibrate (once, ~10 min on GPU — saves to JSON)
-  2. Wrap your model
-  3. Get routing on every query
+Shows the whole loop:
 
-Prerequisites:
-    pip install epistemic-stack transformers torch datasets
+  1. A value the user hedged gets registered as UNVERIFIED.
+  2. Code that embeds that value is scored, and blocked.
+  3. The user confirms the value; the block clears.
+
+Run:
+    python3 examples/quickstart.py
 """
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from esm import wrap_model
+import os
+import sys
+import tempfile
 
-# ── Step 1: Load your model ────────────────────────────────────────────────────
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-MODEL_ID = "meta-llama/Llama-3.2-3B-Instruct"
+from credence.matching import evaluate_constraints, explain
+from credence.registry import CredenceRegistry
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype="float16",
-    device_map=None,
-).cuda().eval()
 
-# ── Step 2: Calibrate (one-time) ──────────────────────────────────────────────
-# Skip this if you already have a calibration file and go to Step 3.
+def main() -> int:
+    db = os.path.join(tempfile.mkdtemp(prefix="credence-quickstart-"), "registry.db")
+    registry = CredenceRegistry(db_path=db)
+    session = "quickstart"
 
-# Option A: CLI (recommended)
-#   esm calibrate --model meta-llama/Llama-3.2-3B-Instruct \
-#                 --dataset trivia_qa --n 100 \
-#                 --output checkpoints/llama3b_cal.json
-
-# Option B: Python API
-# em = wrap_model(model, tokenizer)
-# from datasets import load_dataset
-# ds = load_dataset("trivia_qa", "rc.wikipedia", split="train", streaming=True)
-# samples = [{"question": r["question"],
-#              "answers": r["answer"]["aliases"],
-#              "context": (r["entity_pages"]["wiki_context"] or [""])[0]}
-#            for _, r in zip(range(500), ds)]
-# em.calibrate(samples, n_target=100, save_path="checkpoints/llama3b_cal.json")
-
-# ── Step 3: Wrap and query ────────────────────────────────────────────────────
-
-model = wrap_model(model, tokenizer, calibration="checkpoints/llama3b_cal.json")
-
-questions = [
-    "Who wrote Hamlet?",
-    "What is the melting point of titanium?",
-    "What did the user purchase on their last visit to our store?",  # CTX_DEP
-    "Explain the French Revolution.",
-]
-
-print(f"\n{'='*60}")
-print("EPISTEMIC ROUTING DEMO")
-print(f"{'='*60}")
-print(f"{'Question':<45} {'Routing':>10} {'J_know':>8} {'Verify?':>8}")
-print(f"{'─'*45} {'─'*10} {'─'*8} {'─'*8}")
-
-for q in questions:
-    tag = model.tag(q)
-    print(
-        f"{q[:44]:<45} {tag.routing:>10} "
-        f"{tag.j_know:>+8.3f} {'⚠' if tag.verify_flag else '':>8}"
+    # 1 ── the user hedges a value
+    cid = registry.register(
+        content="I think the Stripe rate limit is around 100 req/min",
+        session_id=session,
+        j_score=0.30,
+        zone="LOW",
+        source="user_stated",
+        constraint_type="vendor_claim",
     )
+    print("1. registered as unverified")
+    print(f"   id={cid[:12]}  session={session}")
 
-print(f"{'='*60}\n")
+    # 2 ── code that embeds it
+    action = "Edit stripe_client.py RATE_LIMIT = 100"
+    blocking = evaluate_constraints(action, registry.list_uncertain(session))
+    print()
+    print(f"2. gate on: {action}")
+    if blocking:
+        c = blocking[0]
+        print(f"   BLOCKED by {c['_verdict']['reason']} agreement")
+        print(f"   shared values: {c['_verdict']['shared_values']}")
+        print(f"   why: {' '.join(explain(action, c['content']))[:60]}")
+    else:
+        print("   allowed")
+        return 1
 
-# ── Routing actions ────────────────────────────────────────────────────────────
+    # 3 ── the user confirms
+    registry.verify(cid, verified_value="100 req/min per stripe.com/docs")
+    remaining = evaluate_constraints(action, registry.list_uncertain(session))
+    print()
+    print("3. user confirmed the value")
+    if remaining:
+        print(f"   still blocked by {len(remaining)} constraint(s)")
+        return 1
+    print("   gate cleared — this write is now allowed")
 
-q = "Who was the first person to walk on the moon?"
-tag = model.tag(q)
+    print()
+    print("Notes")
+    print("  • The block came from a shared VALUE (100) plus the domain terms.")
+    print("  • A write of a *different* value in the same domain is not blocked:")
+    other = "Edit stripe_client.py TIMEOUT_MS = 5000"
+    print(f"    {other}")
+    print(f"    -> {'blocked' if evaluate_constraints(other, registry.list_uncertain(session)) else 'allowed'}")
+    return 0
 
-match tag.routing:
-    case "ANSWER":
-        resp = model.generate(q)
-        print(f"ANSWER: {resp.text}")
-    case "VERIFY":
-        resp = model.generate(q)
-        print(f"VERIFY (may confabulate): {resp.text}")
-        print("  → Adding caveat: please verify this with an authoritative source.")
-    case "RETRIEVE":
-        print(f"RETRIEVE: Triggering RAG for '{q}'")
-        # context = retriever.search(q)
-        # resp = model.generate(f"Context: {context}\nQuestion: {q}")
-    case "DEFER":
-        print(f"DEFER: Model is uncertain. Acknowledging explicitly.")
-    case "ESCALATE":
-        print(f"ESCALATE: Routing to larger model or human review.")
+
+if __name__ == "__main__":
+    raise SystemExit(main())

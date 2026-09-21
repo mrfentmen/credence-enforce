@@ -50,6 +50,7 @@ except ImportError:
     _ANTHROPIC_AVAILABLE = False
 
 from .confidence_proxy import CredenceProxy, CredenceResult
+from .matching import evaluate as _match_evaluate, expand as _match_expand, tokenize as _match_tokenize
 
 try:
     from .registry import CredenceRegistry
@@ -729,6 +730,32 @@ class ContextManager:
     ATTENTION_SINK     = 2    # turns: never compress first N turns (attention sinks)
     MAX_COMPRESSIONS   = 3    # stop compressing after this many (quality guard)
 
+    @property
+    def client(self):
+        """The model client, created on first use.
+
+        Deferred rather than built in __init__. The deterministic layers — the
+        faithfulness probe, the Truth Buffer, the Consistency Enforcer, GTS,
+        and any path that only *builds* a prompt — need no API client at all.
+        Requiring the SDK to construct a ContextManager made that logic
+        unusable without `anthropic` installed and left the mock-LLM
+        integration suite unable to run. The honest moment to ask for a client
+        is the moment a model call is actually made.
+        """
+        if self._client is None:
+            if not _ANTHROPIC_AVAILABLE:
+                raise ImportError(
+                    "The 'anthropic' package is required for model calls. "
+                    "Install it with: pip install 'credence-enforce[api]'"
+                )
+            resolved_key = self._api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+            self._client = Anthropic(api_key=resolved_key)
+        return self._client
+
+    @client.setter
+    def client(self, value):
+        self._client = value
+
     def __init__(
         self,
         api_key:        Optional[str] = None,
@@ -750,14 +777,10 @@ class ContextManager:
         use_manifest:         bool = False,   # use structured EpistemicManifest instead of Truth Buffer
         client = None,                         # pre-built client (e.g. ClaudeCodeClient); overrides api_key
     ):
-        if not _ANTHROPIC_AVAILABLE:
-            raise ImportError("pip install anthropic")
-
-        if client is not None:
-            self.client = client
-        else:
-            resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-            self.client = Anthropic(api_key=resolved_key)
+        # Client and key only. The client itself is built on first use by the
+        # `client` property, so constructing a ContextManager requires no SDK.
+        self._client  = client
+        self._api_key = api_key
         self.proxy         = CredenceProxy(theta_high, theta_low)
         self.system_prompt = system_prompt or (
             "You are a helpful, precise assistant. "
@@ -1643,10 +1666,10 @@ class ContextManager:
         """
         Expand a set of tokens through _CE_DOMAIN_SYNONYMS.
 
-        Each token that appears as a key in the synonym map adds all of that
-        cluster's members to the expanded set. The original token is kept.
-        This is unidirectional (query expands to match constraint vocabulary)
-        and fast — one dict lookup per token, no embedding calls.
+        Retained as the documented home of the synonym map that
+        `_CE_DOMAIN_SYNONYMS` is and that `tests/unit/test_matching.py` pins
+        `credence.matching` against. Matching itself goes through
+        `credence.matching.expand`; this is no longer on the decision path.
         """
         expanded = set(tokens)
         for t in tokens:
@@ -1660,43 +1683,59 @@ class ContextManager:
         """
         Find constraints whose content directly overlaps with the user query.
 
-        A constraint is a direct match when ≥ _CE_MIN_OVERLAP non-stop-words
-        appear in both the expanded user-token set and the expanded constraint
-        token set. Expansion goes through _CE_DOMAIN_SYNONYMS so that
-        paraphrases like "how fast can we call the endpoint?" still fire on
-        "rate limit is 50 req/min" (rate/fast/calls/limit/endpoint all map
-        to the same cluster members).
+        Direct matches escalate Truth Buffer injection to Consistency
+        Enforcement — they are what makes the model express uncertainty about a
+        value it would otherwise assert as fact.
 
-        Direct matches escalate Truth Buffer injection to Consistency Enforcement.
+        The decision comes from `credence.matching.evaluate`, the same scorer
+        the `PreToolUse` gate uses. This method previously carried its own
+        matcher, and it had the same blind spot as the gate's: it tokenised with
+        `text.lower().split()`, so `RATE_LIMIT = 100` yielded the single term
+        `rate_limit`, never matched the prose `rate` / `limit`, and the enforcer
+        stayed silent. It also discarded every token of two characters or
+        fewer, which made a value like `50` invisible. Both matter most in the
+        case this project is for: an agent writing code.
+
+        `_overlap` and `_literal_overlap` are preserved because the enforcement
+        message reads them, and both are still computed from the canonical
+        tokenizer rather than a private one.
+
+        DISPUTED constraints always escalate regardless of overlap — a fact
+        verified and then contradicted is the highest-risk state, and the user
+        must be told whether or not their query mentions it.
         """
-        def _tokenize(text: str) -> set[str]:
-            return {
-                w.strip("?.!,;:\"'()[]") for w in text.lower().split()
-                if len(w.strip("?.!,;:\"'()[]")) > 2
-                and w.strip("?.!,;:\"'()[]") not in _CE_STOPWORDS
-            }
-
-        raw_query = _tokenize(user_message)
-        expanded_query = self._expand_tokens(raw_query)
-
+        # Query-side terms are computed once, not per constraint. The
+        # explanation is built only for constraints that actually matched,
+        # which is the rare case — doing it per constraint roughly doubled the
+        # cost of a gate call on a session with many open constraints.
+        raw_query = _match_tokenize(user_message)
+        expanded_query = _match_expand(raw_query)
         matches = []
+
         for c in constraints:
-            # DISPUTED constraints always escalate to enforcement — no overlap threshold.
-            # A fact previously verified and then contradicted is the highest-risk state;
-            # the user must be notified regardless of whether their query mentions it.
             if c.get("validation_status") == "disputed":
                 matches.append({**c, "_overlap": ["DISPUTED"],
                                  "_literal_overlap": []})
                 continue
-            raw_c = _tokenize(c["content"])
-            expanded_c = self._expand_tokens(raw_c)
-            overlap = expanded_query & expanded_c
-            if len(overlap) >= _CE_MIN_OVERLAP:
-                # Report which original (non-expanded) tokens drove the match
-                # so the enforcement message reads naturally.
-                literal_overlap = raw_query & raw_c
-                matches.append({**c, "_overlap": sorted(overlap),
-                                 "_literal_overlap": sorted(literal_overlap)})
+
+            # expand_synonyms=True: this path warns, it does not block. Its
+            # contract (pinned by tests/unit/test_gate.py) is recall-first —
+            # "How fast can we call the endpoint?" must fire on a rate-limit
+            # constraint. Blocking keeps the literal-only rule; see the module
+            # docstring in credence/matching.py for why the two differ.
+            verdict = _match_evaluate(
+                user_message, c["content"], expand_synonyms=True
+            )
+            if not verdict["block"]:
+                continue
+
+            raw_c = _match_tokenize(c["content"])
+            overlap = expanded_query & _match_expand(raw_c)
+            matches.append({
+                **c,
+                "_overlap":         verdict["shared_values"] + sorted(overlap),
+                "_literal_overlap": sorted(raw_query & raw_c),
+            })
         return matches
 
     def _build_enforcement_system_prompt(self, user_message: str) -> tuple[str, bool]:

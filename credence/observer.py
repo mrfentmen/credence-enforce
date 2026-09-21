@@ -27,17 +27,25 @@ Hook configuration (add to .claude/settings.json):
 
 The PreToolUse gate (hooks.py) is still required for enforcement.
 This observer is the detection layer; hooks.py is the enforcement layer.
+Both resolve the session id the same way (matching.resolve_session_id), so a
+constraint registered here is enforced there even when CREDENCE_SESSION_ID is
+unset.
+
+The registry is created on first real registration rather than requiring the
+database to already exist. Previously a fresh install registered nothing at
+all: the hook read a path that no one had created yet and returned early.
 
 Exit codes: always 0 — observer never blocks.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
 import sys
+
+from credence.matching import resolve_session_id
 
 
 # ── Uncertainty markers — authoritative copy lives in context_manager.py.
@@ -135,11 +143,6 @@ def _classify(text: str) -> tuple[bool, str]:
     return False, ""
 
 
-def _derive_session_id() -> str:
-    """Stable session id from cwd — matches CLAUDE.md auto-derivation."""
-    return hashlib.md5(os.getcwd().encode()).hexdigest()[:8] + "_auto"
-
-
 def observe(text: str, session_id: str, db_path: str) -> bool:
     """
     Inspect a text fragment and register it if uncertain.
@@ -188,16 +191,22 @@ def main() -> int:
     except (json.JSONDecodeError, ValueError):
         return 0
 
+    # The observer's contract is that it always exits 0. Valid JSON that is
+    # not an object would otherwise raise on .get() and break the contract.
+    if not isinstance(payload, dict):
+        return 0
+
     text = _extract_text(payload)
     if not text:
         return 0
 
     db_path    = os.environ.get("CREDENCE_DB", "epistemic_registry.db")
-    session_id = os.environ.get("CREDENCE_SESSION_ID") or _derive_session_id()
+    session_id = resolve_session_id()
 
-    if not os.path.exists(db_path):
-        return 0
-
+    # No existence check: observe() constructs the registry lazily, and only
+    # when the text actually warrants a registration. That keeps the first
+    # real use working while avoiding a stray .db in every directory the
+    # hook happens to run in.
     observe(text, session_id, db_path)
     return 0  # observer never blocks
 

@@ -156,28 +156,42 @@ def test_empty_history_does_not_fire():
 
 # ── P8: Latency ───────────────────────────────────────────────────────────────
 
-def test_probe_latency_under_1ms():
+def _min_ms(fn, n: int = 200, warmup: int = 50) -> float:
+    """Best-of-N per-call latency in milliseconds.
+
+    The lowest sample, not the average. Noise can only inflate a timing, never
+    deflate it, so the minimum is the stable estimator of the probe's real
+    cost. The previous version averaged three cold single-shot timings, which
+    measures how busy the machine was rather than how fast the probe is — it
+    passed at 0.04ms in isolation and failed at 1.08ms under a full-suite run
+    without a single line of probe code changing.
+    """
+    for _ in range(warmup):
+        fn()
+    best = float("inf")
+    for _ in range(n):
+        t0 = time.perf_counter()
+        fn()
+        best = min(best, (time.perf_counter() - t0) * 1000)
+    return best
+
+
+def test_probe_latency_long_text_under_2ms():
+    """A 50x-repeated document must still be probed in under 2ms."""
     text = ("The system processes requests at 100 req/min. " * 50)
-    N = 1000
-    t0 = time.perf_counter()
-    for _ in range(N):
-        probe(text)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    per_call_ms = elapsed_ms / N
+    per_call_ms = _min_ms(lambda: probe(text), n=200)
+    print(f"\n  Probe long-text min latency: {per_call_ms:.4f}ms")
     assert per_call_ms < 2.0, f"Probe too slow: {per_call_ms:.3f}ms per call"
 
 
 def test_probe_latency_reported():
+    """Every sample text must be probed in under 1ms. Asserts on the slowest
+    text's minimum, so a regression in any one of them fails the test."""
     texts = [
         "The rate limit is confirmed at 100 req/min.",
         "I think the rate limit might be around 50.",
         "The endpoint returns HTTP 200 on success.",
     ]
-    times = []
-    for t in texts:
-        t0 = time.perf_counter()
-        probe(t)
-        times.append((time.perf_counter() - t0) * 1000)
-    avg = sum(times) / len(times)
-    print(f"\n  Probe avg latency: {avg:.4f}ms")
-    assert avg < 1.0
+    worst_ms = max(_min_ms(lambda t=t: probe(t), n=200) for t in texts)
+    print(f"\n  Probe min latency (slowest text): {worst_ms:.4f}ms")
+    assert worst_ms < 1.0
