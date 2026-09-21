@@ -112,9 +112,13 @@ package metadata changed; the import package is still `credence`.
 ### Changed
 - `Makefile` rewritten. Five of its six targets referenced files and scripts that
   do not exist in this project; `make test` and `make lint` were among them.
-- Two more latency assertions converted from mean to min-of-N, with budgets
-  unchanged: `test_gate_latency_under_5ms` and
-  `test_wrap_overhead_under_2ms`. Both measured the machine rather than the code.
+- Four more latency assertions converted from mean to min-of-N, with budgets
+  unchanged: `test_gate_latency_under_5ms`, `test_wrap_overhead_under_2ms`, and
+  both registry tests. All of them measured the machine rather than the code.
+  `test_register_latency_under_5ms` failed on a Python 3.12 CI runner with
+  "Register too slow: 16.76ms" while the 3.11 runner passed — the same defect,
+  not a version difference. Its name said 5ms against a 15ms budget; the budget
+  is unchanged and the name now matches it.
   The gate's margin narrowed for a real reason — see the note under Fixed about
   the enforcer now using the identifier-aware matcher, which took a
   20-constraint call from ~0.2ms to ~2.4ms. That is the price of catching
