@@ -1,16 +1,21 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# >=77 for PEP 639 `license` / `license-files` support.
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "credence-guard"
-version = "1.2.5"
-description = "Credence — epistemic enforcement layer that prevents LLMs from forgetting what they didn't know"
+# Fork of credence-guard. `credence-guard` on PyPI belongs to the upstream
+# author, so this fork publishes under its own name. See docs/FORK.md.
+name = "credence-enforce"
+version = "1.3.0"
+description = "Credence — epistemic enforcement layer that prevents LLMs from forgetting what they didn't know (fork of credence-guard)"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 authors = [
-    { name = "Lakshmi-Chakradhar-Vijayarao", email = "vijayarao.l@northeastern.edu" }
+    { name = "Lakshmi-Chakradhar-Vijayarao", email = "vijayarao.l@northeastern.edu" },
+    { name = "mrfentmen", email = "mrfentmen@users.noreply.github.com" },
 ]
 keywords = [
     "llm", "claude", "epistemic", "uncertainty", "mcp",
@@ -25,7 +30,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
     "fastmcp>=1.0.0",
@@ -51,11 +55,16 @@ credence-server       = "credence.mcp_server:main"
 credence-install-gate = "credence.install_gate:main"
 
 [project.urls]
-Homepage = "https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai"
-Repository = "https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai"
-Documentation = "https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai/blob/main/docs/TECHNICAL_REPORT.md"
-"Bug Tracker" = "https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai/issues"
-"PyPI" = "https://pypi.org/project/credence-guard/"
+# Fork repository — create it before publishing (docs/FORK.md, step 1).
+Homepage = "https://github.com/mrfentmen/credence-enforce"
+Repository = "https://github.com/mrfentmen/credence-enforce"
+"Bug Tracker" = "https://github.com/mrfentmen/credence-enforce/issues"
+"Source (fork)" = "https://github.com/mrfentmen/credence-enforce"
+"PyPI" = "https://pypi.org/project/credence-enforce/"
+# Upstream attribution (Apache 2.0 — see NOTICE).
+"Upstream (credence-ai)" = "https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai"
+"Upstream (credence-guard on PyPI)" = "https://pypi.org/project/credence-guard/"
+Documentation = "https://github.com/mrfentmen/credence-enforce/blob/main/docs/TECHNICAL_REPORT.md"
 
 [tool.setuptools.packages.find]
 include = ["credence*"]

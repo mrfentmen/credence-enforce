@@ -14,7 +14,7 @@ pip install -e ".[dev,mcp]"
 
 ```bash
 # Full test suite — no API key needed
-pytest tests/ -q                      # 829 tests
+pytest tests/ -q                      # 936 tests
 
 # Smoke test — verifies install and enforcement path
 credence demo
@@ -31,13 +31,14 @@ python -m evals.precision_eval
 
 ```
 credence/context_manager.py   — compression, Truth Buffer, GTS, CE
+credence/matching.py          — canonical constraint matcher (hook + context)
 credence/registry.py          — SQLite constraint store + decay
 credence/mcp_server.py        — 17-tool MCP server
 credence/observer.py          — UserPromptSubmit hook
 credence/hooks.py             — PreToolUse enforcement gate
 credence/memory.py            — cross-session persistence
 credence_gate/src/main.rs     — Rust PreToolUse hook (faster alternative)
-tests/                        — 829 tests (pytest)
+tests/                        — 936 tests (pytest)
 evals/                        — validation studies (some require API key)
 ```
 
@@ -49,8 +50,12 @@ evals/                        — validation studies (some require API key)
 - Registry operations (register, verify, decay, trajectory)
 - Generation-Time Scanner (`_scan_output_for_constraints`)
 - Consistency Enforcer matching (`_direct_constraint_matches`)
+- Canonical constraint matcher (`credence/matching.py`) — the same scorer the
+  `PreToolUse` gate, the MCP `credence_gate` tool, the MCP `credence_autoverify`
+  tool, and the Consistency Enforcer all use, so prompt-building and enforcement
+  cannot disagree. `tests/unit/test_matcher_parity.py` asserts that.
 - Cross-session memory (snapshot, recall)
-- All 829 tests (`pytest tests/ -q`)
+- All 936 tests (`pytest tests/ -q`)
 
 **Requires API key:**
 - `ContextManager.chat()` (calls Opus 4.7)
@@ -63,7 +68,10 @@ evals/                        — validation studies (some require API key)
 
 **High-value, no API needed:**
 - Expand `_UNCERTAINTY_MARKERS` in `context_manager.py` (currently 423 terms) — add domain-specific hedging language for medical, legal, financial domains
-- Expand `_CE_DOMAIN_SYNONYMS` in `context_manager.py` — add synonym clusters for new domains
+- Expand `_CE_DOMAIN_SYNONYMS` in `context_manager.py` — add synonym clusters for new domains. `credence/matching.py` keeps a copy of this map and
+  `tests/unit/test_matching.py` pins the two together, so update both or the
+  parity test fails (that is deliberate — a silent divergence here once let the
+  gate miss the README's own example)
 - Improve GTS prose scanning — better sentence boundary detection
 - Rust gate performance improvements
 - New unit tests for edge cases
@@ -79,11 +87,11 @@ evals/                        — validation studies (some require API key)
 - If you change decay rates in `registry.py`, update the corresponding S2 tests in `tests/tests.py`
 - If you add uncertainty markers to `_UNCERTAINTY_MARKERS`, add a test case to the S22 suite
 - Keep the faithfulness probe scanning user turns only (not assistant code blocks) — see the comment block above `_has_uncertainty_in_user_turns()` for why
-- No new dependencies without discussion — the core package has zero hard dependencies; `anthropic` is optional (`pip install "credence-guard[api]"`)
+- No new dependencies without discussion — `fastmcp` is the one hard dependency (since 1.2.5); `anthropic` is optional (`pip install "credence-enforce[api]"`)
 
 ## Reporting Issues
 
 Use the GitHub issue templates. Include:
 - Which layer failed (probe / Truth Buffer / GTS / Rust gate / memory)
 - The uncertain constraint text that triggered (or didn't trigger) the behavior
-- Python version and `pip show credence-guard` output
+- Python version and `pip show credence-enforce` output

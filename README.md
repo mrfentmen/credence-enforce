@@ -1,18 +1,28 @@
-# Credence
+# Credence Enforce
 
 AI doesn't remember what it wasn't sure about. Credence does.
 
-[![PyPI](https://img.shields.io/pypi/v/credence-guard)](https://pypi.org/project/credence-guard/)
-[![CI](https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/credence-guard)](https://pypi.org/project/credence-guard/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/mrfentmen/credence-enforce/actions/workflows/ci.yml/badge.svg)](https://github.com/mrfentmen/credence-enforce/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+> **This is a fork of [Credence](https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai)
+> by Lakshmi Chakradhar Vijayarao** (Apache 2.0; upstream PyPI name `credence-guard`).
+> The published distribution here is `credence-enforce`.
+> The fork exists to repair the `PreToolUse` gate — upstream's did not fire on code,
+> only on prose. See [`docs/FORK.md`](docs/FORK.md) for the full list of changes and
+> [`docs/CHANGELOG.md`](docs/CHANGELOG.md) for the reasoning behind each.
+> The import package is still `credence`, so do not install this alongside
+> `credence-guard`.
 
 ```bash
-pip install credence-guard
+pip install credence-enforce
 credence demo   # 30-second smoke test, no API key required
 ```
 
-`[mcp]` adds the FastMCP server for Claude Code. Core package has zero hard dependencies.
+`fastmcp` is a hard dependency (since upstream 1.2.5), so the MCP server works
+out of the box. The core deterministic layers — probe, Truth Buffer, Consistency
+Enforcer, and the `PreToolUse` gate — need no API key and no `anthropic` package;
+the SDK is imported only when a model call is actually made.
 
 ---
 
@@ -151,9 +161,14 @@ Validated across 7 open-weight models (Qwen, Mistral, Llama, Phi, Gemma) from 5 
 credence demo                     # smoke test, no API key
 credence stats                    # false-positive rate from real gate usage
 credence feedback 1|2|3           # tag last gate block: correct / noise / skip
-python3 -m pytest tests/ -q       # 829 tests
+python3 -m pytest tests/ -q       # 936 tests, no API key required
 python3 -m evals.latency_report   # P50/P95/P99
 ```
+
+Entry points that need no API key: `credence demo`, `credence stats`,
+`credence feedback`, and the full test suite — the `anthropic` SDK is imported
+only when a model call is actually made, so the deterministic layers (probe,
+Truth Buffer, Consistency Enforcer, GTS) run without it.
 
 Full methodology: [docs/TECHNICAL_REPORT.md](docs/TECHNICAL_REPORT.md)
 
@@ -165,15 +180,17 @@ Full methodology: [docs/TECHNICAL_REPORT.md](docs/TECHNICAL_REPORT.md)
 credence/         pip-installable package
   observer.py     passive UserPromptSubmit hook
   hooks.py        PreToolUse enforcement gate
+  matching.py     canonical constraint matcher (shared by hook + context)
   mcp_server.py   17-tool MCP server
   registry.py     SQLite constraint store
   memory.py       cross-session persistence
-tests/            829 tests
+tests/            936 tests, no API key required
 evals/            validation studies + multi-model benchmarks
 docs/             technical report, architecture, ETP spec
 credence_gate/    Rust gate (alternative to Python hooks.py)
 experimental/     Phase 2 work — not yet shipped
 paper/            Research paper draft + figures
+examples/         runnable quickstart + hook demo (pinned by tests)
 ```
 
 ---

@@ -40,13 +40,24 @@ Credence stores data in two local locations. **No data is ever transmitted off t
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in credence-guard, please report it **privately** before public disclosure.
+If you discover a security vulnerability in `credence-enforce`, please report it **privately** before public disclosure.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
 **Report via:**
-- GitHub private security advisory: [Security Advisories](https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai/security/advisories/new)
-- Email: vijayarao.l@northeastern.edu (subject: `[SECURITY] credence-guard`)
+- GitHub private security advisory: [Security Advisories](https://github.com/mrfentmen/credence-enforce/security/advisories/new)
+
+This fork does not publish a security email address. Please use the private
+advisory link above — it notifies the maintainer without disclosing the issue
+publicly. Note that GitHub `noreply` addresses (including the one on this
+package's metadata) do not accept inbound mail, so email is not a working
+channel here.
+
+If the vulnerability is in code inherited from upstream — that is, it reproduces
+against `credence-guard` 1.2.5 as well — please also report it upstream to the
+original author, Lakshmi Chakradhar Vijayarao, via
+<https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai/security/advisories/new>.
+Fixes for upstream defects belong upstream.
 
 **Please include:**
 1. Description of the vulnerability

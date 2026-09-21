@@ -5,7 +5,7 @@ Tracks uncertain values from conversation and blocks writes until verified.
 Works with any coding agent. Zero API key required.
 
 Primary interface — MCP server:
-    pip install "credence-guard[mcp]"
+    pip install credence-enforce
     credence-server              # starts the MCP server
 
 Zero-API Python interface:
@@ -23,7 +23,7 @@ from .registry import CredenceRegistry
 from .memory import CredenceMemory
 from .wrap import wrap, WrapResult, measure_fcr
 
-__version__ = "1.2.5"
+__version__ = "1.3.0"
 __all__ = [
     "CredenceRegistry",
     "CredenceMemory",

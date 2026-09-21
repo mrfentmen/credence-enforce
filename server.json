@@ -1,15 +1,15 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.Lakshmi-Chakradhar-Vijayarao/credence",
-  "title": "Credence — Epistemic Guard",
-  "description": "Epistemic guard for AI coding: tracks uncertain values and blocks writes until verified.",
-  "version": "1.2.5",
+  "name": "io.github.mrfentmen/credence-enforce",
+  "title": "Credence Enforce — Epistemic Guard",
+  "description": "Epistemic guard for AI coding: tracks uncertain values and blocks writes until verified. Fork of credence-guard with the PreToolUse gate repaired to fire on code.",
+  "version": "1.3.0",
   "packages": [
     {
       "registryType": "pypi",
-      "identifier": "credence-guard",
-      "version": "1.2.5",
-      "installInstructions": "pip install credence-guard",
+      "identifier": "credence-enforce",
+      "version": "1.3.0",
+      "installInstructions": "pip install credence-enforce",
       "transport": {
         "type": "stdio"
       }
@@ -17,8 +17,7 @@
   ],
   "repository": {
     "source": "github",
-    "id": "1221864133",
-    "url": "https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai"
+    "url": "https://github.com/mrfentmen/credence-enforce"
   },
   "tools": [
     {

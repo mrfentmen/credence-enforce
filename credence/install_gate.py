@@ -1,7 +1,7 @@
 """
 install_gate.py — Install the credence-gate Rust binary.
 
-Run after `pip install credence-guard` to build and install the native
+Run after `pip install credence-enforce` to build and install the native
 PreToolUse hook. Requires Rust (cargo) to be installed.
 
 Usage:
@@ -63,7 +63,7 @@ def main() -> int:
     gate_src = _find_gate_src()
     if gate_src is None:
         print("❌  credence_gate/ source directory not found.")
-        print("    Clone the repo: git clone https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai")
+        print("    Clone the repo: git clone https://github.com/mrfentmen/credence-enforce")
         return 1
 
     print(f"Building credence-gate from {gate_src} ...")

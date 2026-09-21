@@ -1,0 +1,21 @@
+credence-enforce
+Copyright 2026 mrfentmen <mrfentmen@users.noreply.github.com>
+
+This product includes software developed as part of the Credence project
+(https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai),
+Copyright 2026 Lakshmi Chakradhar Vijayarao, licensed under the
+Apache License, Version 2.0.
+
+Upstream distribution: credence-guard 1.2.5 (https://pypi.org/project/credence-guard/)
+Upstream source at fork point: commit 7b431f0
+  "docs: clarify research paper separation and link to thesis repo"
+
+Changes made relative to upstream are listed in docs/FORK.md and
+docs/CHANGELOG.md under [Unreleased]. In summary, this fork repairs the
+enforcement path (the gate previously did not fire on code), removes an
+unimportable package that upstream shipped in its wheel, and makes the
+deterministic layers usable without the `anthropic` SDK.
+
+The Apache License, Version 2.0 requires that modified files carry prominent
+notices stating that they were changed (Section 4b). The full list of modified
+files and the nature of each change is recorded in docs/FORK.md.

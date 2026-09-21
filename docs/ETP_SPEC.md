@@ -248,4 +248,5 @@ be additive. Removed fields will be deprecated for one major version before remo
 ## Reference Implementation
 
 [credence-ai](https://github.com/Lakshmi-Chakradhar-Vijayarao/credence-ai) — Python MCP server.
-Install: `pip install credence-guard`
+Install (upstream): `pip install credence-guard`
+Install (this fork): `pip install credence-enforce`
