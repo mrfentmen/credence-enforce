@@ -17,7 +17,7 @@ Usage in .claude/settings.json:
   {
     "hooks": {
       "PreToolUse": [{
-        "matcher": "Write|Edit|Bash|NotebookEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [{"type": "command", "command": "credence-gate"}]
       }]
     }
@@ -32,7 +32,7 @@ Protocol (Claude Code hook protocol):
 Registry: reads epistemic_registry.db from the current working directory.
 */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::{self, Read};
 use std::time::Instant;
 
@@ -41,35 +41,41 @@ use rusqlite::{Connection, params};
 use regex::Regex;
 
 // ---------------------------------------------------------------------------
-// Constants — must match credence/context_manager.py
+// Constants — must match credence/matching.py
 // ---------------------------------------------------------------------------
 
 const MIN_OVERLAP: usize = 2;
+// Numeric literals shorter than this do not take part in the value rule.
+const MIN_NUM_LEN: usize = 2;
 const DB_PATH: &str = "epistemic_registry.db";
 
+// Canonical copy: credence/matching.py (`STOPWORDS`). This list was 60 words
+// here and 78 there, differing in both directions — it carried code words the
+// canonical list scores ("write", "edit", "file", "code", "function",
+// "method") and omitted 45 the canonical list stops ("think", "know",
+// "want", "is", "of", "size", "error"). Either direction changes which
+// writes block, so a constraint phrased "I think the rate limit is ..." scored
+// differently in the two gates.
+// tests/unit/test_matcher_parity.py parses this literal and fails if the two
+// lists diverge.
 static STOPWORDS: &[&str] = &[
-    "the", "and", "for", "that", "this", "with", "have", "from",
-    "are", "was", "were", "has", "had", "been", "can", "will",
-    "not", "but", "all", "any", "its", "into", "over", "also",
-    "than", "only", "such", "very", "more", "just", "you", "may",
-    "might", "should", "would", "could", "about", "what", "write",
-    "edit", "run", "set", "get", "use", "make", "call", "add",
-    "value", "values", "update", "configure", "config", "let",
-    "new", "old", "file", "path", "code", "function", "method",
+    "a", "about", "also", "an", "and", "are", "as", "at", "be", "been", "being",
+    "but", "by", "can", "could", "did", "do", "does", "error", "for", "from",
+    "get", "give", "go", "had", "has", "have", "how", "i", "if", "in", "into",
+    "is", "it", "its", "just", "know", "make", "may", "might", "my", "need",
+    "now", "of", "on", "or", "our", "say", "see", "set", "should", "size",
+    "so", "take", "tell", "that", "the", "think", "this", "through", "to",
+    "use", "used", "using", "want", "was", "we", "were", "what", "when", "where",
+    "which", "who", "will", "with", "would", "you", "your",
 ];
 
-// Domain synonym clusters (subset of the 32 in context_manager.py)
-// Key insight: expand tokens so "endpoint" matches "rate" matches "limit"
-const SYNONYM_CLUSTERS: &[&[&str]] = &[
-    &["rate", "limit", "throttle", "quota", "ratelimit", "freq", "frequency", "speed", "throughput", "fast", "slow", "calls", "requests", "req"],
-    &["token", "expiry", "expire", "expires", "ttl", "timeout", "session", "auth", "jwt", "oauth", "credential", "credentials"],
-    &["retry", "backoff", "attempt", "attempts", "max_retries"],
-    &["endpoint", "url", "host", "port", "address", "api", "service"],
-    &["cost", "price", "pricing", "billing", "charge", "fee"],
-    &["memory", "ram", "heap", "buffer", "cache", "size"],
-    &["latency", "delay", "response", "time", "ms", "millisecond", "seconds"],
-    &["concurrent", "parallel", "workers", "threads", "connections"],
-];
+// No synonym clusters here, deliberately. credence/matching.py excludes
+// synonym-cluster agreement from the *blocking* decision: expanding both sides
+// lets one shared cluster key satisfy the overlap threshold by itself, so
+// `TIMEOUT_MS = 5000` would be blocked merely because an unverified constraint
+// mentions some other timeout. This binary only ever blocks, so it has no
+// recall-oriented caller that would want the expansion — carrying it here is
+// what made the two gates return different verdicts for the same write.
 
 // ---------------------------------------------------------------------------
 // Input schema
@@ -103,42 +109,84 @@ fn stopword_set() -> HashSet<&'static str> {
     STOPWORDS.iter().copied().collect()
 }
 
-fn build_synonym_map() -> HashMap<&'static str, Vec<&'static str>> {
-    let mut map: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
-    for cluster in SYNONYM_CLUSTERS {
-        for &word in *cluster {
-            let mut others: Vec<&'static str> = cluster.iter().copied()
-                .filter(|&w| w != word)
-                .collect();
-            map.entry(word).or_default().append(&mut others);
+/// Split one token into its lower-cased identifier parts.
+///
+/// `rate_limit` -> `[rate, limit]`, `rateLimit` -> `[rate, limit]`,
+/// `stripeClientRateLimit` -> `[stripe, client, rate, limit]`.
+///
+/// Casing is split BEFORE lowering: lowering first would collapse
+/// `rateLimit` into `ratelimit` and lose the boundary that lets it match the
+/// prose "rate limit". The canonical `regex` crate has no lookaround, so the
+/// camel boundary is found by scanning rather than with the Python side's
+/// `(?<=[a-z0-9])(?=[A-Z])`.
+fn split_identifier(token: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for chunk in token.split(|c| matches!(c, '_' | '.' | '-' | '/' | '\\')) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let chars: Vec<char> = chunk.chars().collect();
+        let mut cur = String::new();
+        for (i, &c) in chars.iter().enumerate() {
+            if i > 0 && c.is_ascii_uppercase() {
+                let prev = chars[i - 1];
+                if (prev.is_ascii_lowercase() || prev.is_ascii_digit()) && !cur.is_empty() {
+                    out.push(cur.to_lowercase());
+                    cur.clear();
+                }
+            }
+            cur.push(c);
+        }
+        if !cur.is_empty() {
+            out.push(cur.to_lowercase());
         }
     }
-    map
+    out
 }
 
 fn tokenize(text: &str, stopwords: &HashSet<&str>) -> HashSet<String> {
-    // Replace underscores and non-word chars with spaces so RATE_LIMIT → rate limit
-    let re = Regex::new(r"[^\w\s]|_").unwrap();
+    // Punctuation becomes a separator. `_` is a word character, so it survives
+    // this pass and is handled by split_identifier — which is what makes
+    // RATE_LIMIT score as `rate` and `limit` rather than one dead token.
+    let re = Regex::new(r"[^\w\s]").unwrap();
     let cleaned = re.replace_all(text, " ");
-    cleaned.split_whitespace()
-        .map(|w| w.to_lowercase())
-        .filter(|w| w.len() > 2 && !stopwords.contains(w.as_str()))
-        .collect()
-}
-
-fn expand_tokens<'a>(
-    tokens: &HashSet<String>,
-    syn_map: &'a HashMap<&'static str, Vec<&'static str>>,
-) -> HashSet<String> {
-    let mut expanded = tokens.clone();
-    for token in tokens.iter() {
-        if let Some(synonyms) = syn_map.get(token.as_str()) {
-            for &syn in synonyms {
-                expanded.insert(syn.to_string());
+    let mut out: HashSet<String> = HashSet::new();
+    for word in cleaned.split_whitespace() {
+        // Keep the whole token alongside its parts, so a constraint that
+        // literally says `rate_limit` still matches another literal
+        // `rate_limit`.
+        let whole = word.to_lowercase();
+        if whole.chars().count() >= 3 && !stopwords.contains(whole.as_str()) {
+            out.insert(whole);
+        }
+        for part in split_identifier(word) {
+            if part.chars().count() >= 3 && !stopwords.contains(part.as_str()) {
+                out.insert(part);
             }
         }
     }
-    expanded
+    out
+}
+
+
+/// Numeric literals of at least `MIN_NUM_LEN` digits, matching `NUM_PATTERN` in
+/// credence/matching.py and `_GTS_NUM_PATTERN` in context_manager.py.
+///
+/// The Python side blocks on a shared *value* even when no term overlaps; this
+/// binary had no such rule, so `Write TIMEOUT = 100` against a constraint about
+/// a `100 req/min` rate limit was allowed here and blocked there.
+fn numbers(text: &str) -> HashSet<String> {
+    // The whole match is the digits, so no capture group is needed; converting
+    // to an owned String inside the loop keeps this free of borrow subtleties.
+    let re = Regex::new(r"\b\d+(?:\.\d+)?\b").unwrap();
+    let mut out: HashSet<String> = HashSet::new();
+    for m in re.find_iter(text) {
+        let n = m.as_str();
+        if n.chars().count() >= MIN_NUM_LEN {
+            out.insert(n.to_string());
+        }
+    }
+    out
 }
 
 fn resolve_db_path() -> String {
@@ -344,24 +392,25 @@ fn main() {
         std::process::exit(0);
     }
 
-    // Tokenize and expand query
+    // Tokenise. The query side is built once; the constraint side is rebuilt
+    // per constraint, which is the dominant cost of this loop.
     let stopwords = stopword_set();
-    let syn_map = build_synonym_map();
     let query_tokens = tokenize(&args_text, &stopwords);
-    let query_expanded = expand_tokens(&query_tokens, &syn_map);
+    let query_values = numbers(&args_text);
 
     // Check each constraint for overlap
     let mut matched: Vec<(String, String, String, f64)> = vec![];
     for constraint in &constraints {
         let constraint_tokens = tokenize(&constraint.content, &stopwords);
-        let constraint_expanded = expand_tokens(&constraint_tokens, &syn_map);
 
-        // Count literal + expanded overlap (use expanded for counting)
-        let overlap: HashSet<&String> = query_expanded.iter()
-            .filter(|t| constraint_expanded.contains(*t))
-            .collect();
+        // Two independent rules, mirroring credence/matching.py's blocking
+        // policy: a shared numeric value blocks on its own, otherwise two
+        // shared literal terms are needed. Synonym agreement is deliberately
+        // not evidence here — see the note where the clusters used to live.
+        let shared_terms = query_tokens.intersection(&constraint_tokens).count();
+        let shared_value = !query_values.is_disjoint(&numbers(&constraint.content));
 
-        if overlap.len() >= MIN_OVERLAP {
+        if shared_value || shared_terms >= MIN_OVERLAP {
             matched.push((
                 constraint.constraint_id.clone(),
                 constraint.content.clone(),

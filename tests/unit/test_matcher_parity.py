@@ -59,6 +59,10 @@ CORPUS = [
     ("Write stripe_client.py: RATE_LIMIT = 100", CONSTRAINT, True),
     ("Edit config rate_limit = 100", CONSTRAINT, True),
     ("Write stripeClientRateLimit = 100", CONSTRAINT, True),
+    # camelCase, and a value that is NOT the constraint's. This blocks only if
+    # the identifiers are split, so it isolates that rule from the numeric-value
+    # one below; the Rust gate allowed it (no camelCase split, no value rule).
+    ("Write stripeClientRateLimit = 999", CONSTRAINT, True),
     # Shared numeric value.
     ("Bash python -c 'print(100)'", CONSTRAINT, True),
     ("Write TIMEOUT = 100", CONSTRAINT, True),
@@ -69,6 +73,11 @@ CORPUS = [
     # Same domain, different value — must not block.
     ("Write MAX_RETRIES = 3", CONSTRAINT, False),
     ("Write CACHE_TTL = 900", CONSTRAINT, False),
+    # Same domain through a synonym only ("throttle" vs "rate limit") and a
+    # different value. The canonical matcher requires literal term overlap or a
+    # shared value, so this must not block — the Rust gate blocked it while it
+    # carried its own synonym expansion, which is the divergence this row pins.
+    ("Write throttle = 25", CONSTRAINT, False),
 ]
 
 
@@ -353,6 +362,30 @@ def test_rust_gate_and_python_hook_gate_the_same_tools():
     )
 
 
+def _rust_stopwords() -> set[str]:
+    """Parse the stopword list out of credence_gate/src/main.rs.
+
+    Read as source for the same reason as _rust_enforced_tools: this has to run
+    on machines without cargo, and two gates stopping different words changes
+    which writes block. The lists differed in both directions — 60 words there
+    against 78 here, with code words scored on one side and "think"/"know"/
+    "want" stopped on the other — and nothing compared them.
+    """
+    src = (ROOT / "credence_gate" / "src" / "main.rs").read_text(encoding="utf-8")
+    match = re.search(r"static STOPWORDS: &\[&str\] = &\[(.*?)\];", src, re.S)
+    assert match, "could not find `static STOPWORDS: &[&str]` in main.rs"
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def test_rust_gate_uses_the_canonical_stopword_list():
+    rust = _rust_stopwords()
+    assert rust == matching.STOPWORDS, (
+        "the Rust gate and the canonical matcher stopword different words: "
+        f"only_rust={sorted(rust - matching.STOPWORDS)} "
+        f"only_python={sorted(matching.STOPWORDS - rust)}"
+    )
+
+
 def test_every_writing_tool_is_enforced():
     """The list cannot silently shrink.
 
@@ -399,6 +432,9 @@ def test_read_only_tools_are_never_blocked(tmp_path, tool):
     ("README.md", "matcher"),
     ("docs/INTERNALS.md", "matcher"),
     ("credence/hooks.py", "matcher"),
+    # The Rust binary's own usage docstring is a sixth copy of this regex, and
+    # it was the last one still omitting MultiEdit.
+    ("credence_gate/src/main.rs", "matcher"),
 ])
 def test_documented_matcher_covers_every_enforced_tool(path, needle):
     """Every hand-written `matcher` must gate every tool that writes.
