@@ -14,10 +14,12 @@ built. Build it with:
 
     cd credence_gate && cargo build --release
 
-Note for CI: the workflow's `rust-gate` job builds the crate but runs in a
-separate job from the one that runs pytest, so this file skips there. Wiring it
-up would mean adding the build (and a Rust toolchain) to the test job. That is a
-change to `.github/workflows/ci.yml` and has deliberately not been made.
+The `rust-gate` CI job builds the crate and then runs this file, so the parity
+assertions actually execute there. They did not before: the job built the binary
+and stopped, `test` ran in a separate job with no binary, and so every
+invocation of this file — CI included — skipped. A suite that always skips is
+indistinguishable from a suite that always passes, and the Rust matching path
+went unexamined for it.
 
 Coverage:
   X1 The binary is found, or the file skips with instructions

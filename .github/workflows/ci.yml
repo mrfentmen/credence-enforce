@@ -78,3 +78,20 @@ jobs:
 
       - name: Verify binary exists
         run: ls -lh credence_gate/target/release/credence-gate
+
+      # Building the binary is not the same as checking what it decides. The
+      # parity test in tests/unit/test_rust_gate_parity.py compares this gate's
+      # verdicts against credence/matching.py, and it skips when the binary is
+      # absent — so in a job that only built the crate, that whole file skipped
+      # and the Rust matching path had no coverage at all. It runs here, where
+      # the binary exists.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run the Rust gate parity tests
+        run: pytest tests/unit/test_rust_gate_parity.py -v --tb=short
