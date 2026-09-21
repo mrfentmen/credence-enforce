@@ -25,7 +25,7 @@ Every change is listed with its reasoning in `docs/CHANGELOG.md` under
 | 2 | `credence/matching.py` — one canonical constraint matcher | Four scorers became one. The MCP tool had lower-cased before splitting (`RATE_LIMIT` stayed one token); the autoverifier used a 20-word stopword list against the gate's ~190, and it is the tool that marks constraints *verified*, i.e. the one that can switch enforcement off. |
 | 3 | `credence_runtime/` removed | It was packaged into the wheel by `include = ["credence*"]` but could not import — it depended on a nonexistent `esm` module. |
 | 4 | `ContextManager` no longer needs the `anthropic` SDK to construct | 17 tests could not run without it. The deterministic layers need no client. |
-| 5 | The Rust gate now reads `CREDENCE_DB` | It read only `CREDENCE_DB_PATH`, which nothing else uses. A user who followed README.md and set `CREDENCE_DB` had the gate open an empty database and allow every write. |
+| 5 | Every layer resolves the registry path the same way | Three layers each read a different subset of `CREDENCE_DB` / `CREDENCE_DB_PATH` / `CREDENCE_REGISTRY_PATH`. Set the one the code called canonical and the hook opened a different, empty file — enforcement looked installed and was inert. One resolver now, in `credence/matching.py`. |
 
 `docs/CHANGELOG.md` also records the removal of four dead `examples/` scripts,
 the `Makefile` rewrite (five of six targets referenced files that do not exist),
@@ -41,12 +41,12 @@ README.md                           licence badge, test count, entry-point notes
 credence/__init__.py                version; install instruction
 credence/__main__.py                demo scores via the canonical matcher; install/footer strings
 credence/context_manager.py         lazy API client; enforcer delegates to the canonical matcher
-credence/hooks.py                   uses the canonical matcher; session-id resolution shared
+credence/hooks.py                   uses the canonical matcher; session-id and db-path resolution shared
 credence/install_gate.py            points at the fork's repository
 credence/mcp_server.py              gate + autoverifier delegate to the canonical matcher;
                                     decisions extracted to module level so tests can reach them;
                                     private matcher copies deleted
-credence/observer.py                registers on a fresh install; shares session-id resolution
+credence/observer.py                registers on a fresh install; shares session-id and db-path resolution
 credence_gate/src/main.rs           registry env chain matches the Python side (see row 5 above)
 docs/CHANGELOG.md                   [Unreleased] section added
 docs/ETP_SPEC.md                    fork install name added alongside upstream
@@ -74,7 +74,7 @@ Deleted: `credence_runtime/`, `examples/{compliance_logging,dashboard,langchain_
 ## Name collision
 
 The import package is still `credence`. It was **not** renamed, deliberately:
-renaming it would touch every one of the 939 tests and every documented code
+renaming it would touch every one of the 946 tests and every documented code
 example for no functional gain. The consequence is that `credence-enforce` and
 `credence-guard` cannot both be installed in the same environment — they provide
 the same module and the same console scripts. Pick one.

@@ -6,7 +6,7 @@ any compression, any session, any handoff.
 
 **Current state** (2026-05-06):
 - 17 MCP tools — shipped as v1.2.0
-- Tests: 935 passing, 4 skipped, 0 failing
+- Tests: 942 passing, 4 skipped, 0 failing
 - Core: faithfulness probe (0.07ms, 0% FCR with Haiku/Opus), Rust gate (3.4ms, 98× faster than Python hook)
 - Free-tier validated: EQLR 51% → 0% blocked on llama-3.1-8b-instant (n=98, Groq)
 - Observer hook live — fires before model generates, zero API key

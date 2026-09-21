@@ -108,13 +108,15 @@ After you confirm: `"Confirmed — rate limit is 100 req/min per stripe.com/docs
 
 Done. No API key required.
 
-> **Registry:** Credence creates `epistemic_registry.db` in your working directory. Add `*.db` to your `.gitignore`, or set `CREDENCE_DB=~/.credence/registry.db` to keep it global.
+> **Registry:** Credence creates `epistemic_registry.db` in your working directory. Add `*.db` to your `.gitignore`, or set `CREDENCE_DB=~/.credence/registry.db` to keep it global. `CREDENCE_DB` is what the hook, the observer, and the Rust gate resolve; `CREDENCE_DB_PATH` also works and takes precedence over it, with `CREDENCE_REGISTRY_PATH` accepted as a legacy alias. Every layer resolves them in that order.
 >
 > **Session tracking:** Set `CREDENCE_SESSION_ID=my-project` to keep constraints stable across directory changes and terminal restarts.
 >
 > **Event log:** The gate writes block/allow events to `~/.credence/events.jsonl` (local only, never sent anywhere). Set `CREDENCE_NO_LOG=1` to disable.
 >
 > **Constraint cap:** The registry allows up to 500 constraints per session by default. Override with `CREDENCE_MAX_CONSTRAINTS=<n>`.
+>
+> **Debugging:** Set `CREDENCE_DEBUG=1` to have the Rust gate log its timing and verdict to stderr for each hook invocation.
 
 ---
 
@@ -161,7 +163,7 @@ Validated across 7 open-weight models (Qwen, Mistral, Llama, Phi, Gemma) from 5 
 credence demo                     # smoke test, no API key
 credence stats                    # false-positive rate from real gate usage
 credence feedback 1|2|3           # tag last gate block: correct / noise / skip
-python3 -m pytest tests/ -q       # 939 tests, no API key required
+python3 -m pytest tests/ -q       # 946 tests, no API key required
 python3 -m evals.latency_report   # P50/P95/P99
 ```
 
@@ -184,7 +186,7 @@ credence/         pip-installable package
   mcp_server.py   17-tool MCP server
   registry.py     SQLite constraint store
   memory.py       cross-session persistence
-tests/            939 tests, no API key required
+tests/            946 tests, no API key required
 evals/            validation studies + multi-model benchmarks
 docs/             technical report, architecture, ETP spec
 credence_gate/    Rust gate (alternative to Python hooks.py)

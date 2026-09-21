@@ -385,3 +385,43 @@ def derive_session_id() -> str:
 def resolve_session_id() -> str:
     """The session id both layers must use: explicit env var, else derived."""
     return os.environ.get("CREDENCE_SESSION_ID") or derive_session_id()
+
+
+# ---------------------------------------------------------------------------
+# Registry location
+# ---------------------------------------------------------------------------
+#
+# Every layer must resolve the SAME database, or one of them registers a
+# constraint where another never looks. That is not hypothetical: the observer
+# and the hook read only CREDENCE_DB, while the MCP server read
+# CREDENCE_DB_PATH first and the Rust gate read CREDENCE_DB_PATH only. Set
+# CREDENCE_DB_PATH — the name mcp_server.py calls canonical — and the hook and
+# observer nonetheless opened `epistemic_registry.db` in the working directory
+# while the tools read somewhere else. A gate that opens the wrong file finds no
+# constraints and allows every write.
+#
+# This helper lives here, next to resolve_session_id, because these are the two
+# pieces of shared configuration the enforcement layers must agree on, and
+# because hooks.py and observer.py already import this module at startup. They
+# deliberately defer importing credence.registry (see hooks.py), and a
+# PreToolUse hook runs on every tool call, so the import cost is real.
+
+DB_PATH_ENV_CHAIN = ("CREDENCE_DB_PATH", "CREDENCE_DB", "CREDENCE_REGISTRY_PATH")
+DEFAULT_DB_PATH = "epistemic_registry.db"
+
+
+def resolve_db_path() -> str:
+    """The registry file every layer must open.
+
+    Order: CREDENCE_DB_PATH (canonical) -> CREDENCE_DB (what README.md
+    documents, and what hooks.py and observer.py used) -> CREDENCE_REGISTRY_PATH
+    (legacy) -> `epistemic_registry.db` in the working directory.
+
+    The Rust gate in credence_gate/ implements the same chain; keep them in
+    step.
+    """
+    for var in DB_PATH_ENV_CHAIN:
+        value = os.environ.get(var)
+        if value:
+            return value
+    return DEFAULT_DB_PATH

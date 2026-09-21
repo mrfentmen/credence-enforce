@@ -30,6 +30,7 @@ Coverage:
   P4 The Consistency Enforcer is never narrower than the blocking path
   P5 The enforcement modules all share one matcher object, not four copies
   P6 The deleted duplicates have not come back
+  P7 Every layer resolves the same registry file from the same environment
 """
 
 import json
@@ -41,6 +42,7 @@ import pytest
 
 from credence import hooks, matching, mcp_server
 from credence.context_manager import ContextManager
+from credence.matching import resolve_db_path
 from credence.registry import CredenceRegistry
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -68,15 +70,17 @@ CORPUS = [
 ]
 
 
-def _run_hook(payload, db, session_id):
+def _run_hook(payload, db, session_id, env_extra=None, db_var="CREDENCE_DB"):
     """Invoke the hook as a subprocess, the way Claude Code does."""
     env = {
         "PATH": "/usr/bin:/bin:/usr/local/bin",
         "HOME": str(Path.home()),
-        "CREDENCE_DB": str(db),
+        db_var: str(db),
         "CREDENCE_NO_LOG": "1",
         "CREDENCE_SESSION_ID": session_id,
     }
+    if env_extra:
+        env.update(env_extra)
     return subprocess.run(
         [sys.executable, "-m", "credence.hooks"],
         input=json.dumps(payload),
@@ -229,6 +233,63 @@ def test_enforcement_modules_share_one_matcher_object():
     assert hooks.evaluate_constraints is matching.evaluate_constraints
     assert mcp_server.evaluate_constraints is matching.evaluate_constraints
     assert mcp_server.blocking_constraints.__module__ == "credence.mcp_server"
+
+
+# ── P7 ───────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({}, "epistemic_registry.db"),
+        ({"CREDENCE_DB": "a.db"}, "a.db"),
+        ({"CREDENCE_DB_PATH": "b.db"}, "b.db"),
+        ({"CREDENCE_DB_PATH": "b.db", "CREDENCE_DB": "a.db"}, "b.db"),
+        ({"CREDENCE_DB": "a.db", "CREDENCE_REGISTRY_PATH": "c.db"}, "a.db"),
+        ({"CREDENCE_REGISTRY_PATH": "c.db"}, "c.db"),
+    ],
+)
+def test_registry_path_resolution(monkeypatch, env, expected):
+    """One chain, one answer, regardless of which name a user sets."""
+    for var in ("CREDENCE_DB_PATH", "CREDENCE_DB", "CREDENCE_REGISTRY_PATH"):
+        monkeypatch.delenv(var, raising=False)
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    assert resolve_db_path() == expected
+
+
+def test_hook_honours_credence_db_path(tmp_path):
+    """Regression: the hook read only CREDENCE_DB.
+
+    CREDENCE_DB_PATH is the name mcp_server.py calls canonical. Setting it used
+    to point the MCP tools at one database while the hook and observer opened
+    `epistemic_registry.db` in the working directory — so the layer that
+    REGISTERS and the layer that ENFORCES disagreed, the gate found no
+    constraints, and every write was allowed. The Rust gate had the same split.
+    """
+    db = tmp_path / "via-db-path.db"
+    sid = "cfg-split"
+    CredenceRegistry(db_path=str(db)).register(CONSTRAINT, sid, j_score=0.3, zone="LOW")
+
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    assert not (elsewhere / "epistemic_registry.db").exists()
+
+    proc = _run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": sid,
+            "tool_name": "Write",
+            "tool_input": {"file_path": "a.py", "content": "RATE_LIMIT = 100"},
+        },
+        db,
+        sid,
+        env_extra={"CREDENCE_DB_PATH": str(db)},
+        db_var="CREDENCE_DB_PATH",
+    )
+    assert proc.returncode == 2, (
+        "the hook did not find the constraint via CREDENCE_DB_PATH — it exited "
+        f"{proc.returncode} instead of blocking\nstderr: {proc.stderr[:400]}"
+    )
 
 
 # ── P6 ───────────────────────────────────────────────────────────────────────

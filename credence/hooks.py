@@ -56,7 +56,11 @@ import os
 import re
 import sys
 
-from credence.matching import evaluate_constraints, resolve_session_id
+from credence.matching import (
+    evaluate_constraints,
+    resolve_db_path,
+    resolve_session_id,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +121,11 @@ def main() -> int:
     action_text = f"{tool_name} {_flatten(tool_input)}"
 
     # --- Locate registry ----------------------------------------------------
-    db_path    = os.environ.get("CREDENCE_DB", "epistemic_registry.db")
+    # Shared resolver: this hook, the observer, the MCP server, and the Rust
+    # gate must all open the same file. This used to read only CREDENCE_DB, so
+    # setting CREDENCE_DB_PATH pointed the MCP tools at one database and this
+    # hook at another (see the note in credence/matching.py).
+    db_path    = resolve_db_path()
     session_id = resolve_session_id()
 
     if not os.path.exists(db_path):

@@ -40,7 +40,6 @@ Design principle: Unknown = unverified. Every value extracted is unverified
 until the user explicitly calls credence_verify with evidence.
 """
 
-import os
 import re
 import threading
 from typing import Optional
@@ -57,7 +56,7 @@ from .context_manager import (
     _GTS_SKIP_PREFIXES,
     _GTS_SENTENCE_SPLIT,
 )
-from .matching import evaluate_constraints
+from .matching import evaluate_constraints, resolve_db_path
 from .registry import CredenceRegistry
 from .temporal_patterns import scan_temporal, scan_domain_assignments, TEMPORAL_J_SCORES
 
@@ -96,13 +95,9 @@ def _get_registry() -> CredenceRegistry:
     if _registry is None:
         with _registry_lock:
             if _registry is None:  # double-checked locking
-                db_path = (
-                    os.environ.get("CREDENCE_DB_PATH")
-                    or os.environ.get("CREDENCE_DB")           # alias used by hooks.py / observer.py
-                    or os.environ.get("CREDENCE_REGISTRY_PATH")
-                    or "epistemic_registry.db"
-                )
-                _registry = CredenceRegistry(db_path=db_path)
+                # Shared resolver, so this server and the hook and observer and
+                # the Rust gate agree on the file (see credence/matching.py).
+                _registry = CredenceRegistry(db_path=resolve_db_path())
     return _registry
 
 

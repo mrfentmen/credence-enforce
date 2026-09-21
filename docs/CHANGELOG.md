@@ -45,6 +45,22 @@ package metadata changed; the import package is still `credence`.
   model express uncertainty instead of asserting a value as fact, so on code —
   most of what a coding agent sees — it was silent. It now delegates to
   `credence.matching`.
+- **Three layers resolved the registry path three different ways, so setting
+  the documented variable could disable enforcement.** `credence/hooks.py` and
+  `credence/observer.py` read only `CREDENCE_DB`; `credence/mcp_server.py` read
+  `CREDENCE_DB_PATH` → `CREDENCE_DB` → `CREDENCE_REGISTRY_PATH`; the Rust gate
+  read `CREDENCE_DB_PATH` → `CREDENCE_REGISTRY_PATH` and not `CREDENCE_DB` at
+  all. `mcp_server.py` calls `CREDENCE_DB_PATH` canonical, so a user who set it
+  pointed the MCP tools at one database while the observer *registered*
+  constraints into `epistemic_registry.db` in the working directory and the
+  hook *looked* there — unless the working directory differed, in which case
+  the two did not even agree with each other. A gate that opens the wrong file
+  finds no constraints and allows every write.
+
+  There is now one resolver, `credence.matching.resolve_db_path`, used by the
+  hook, the observer, and the MCP server, with the Rust gate implementing the
+  same chain. Pinned by `test_hook_honours_credence_db_path`, which blocks a
+  write using only `CREDENCE_DB_PATH` set — verified by mutation.
 - **The Rust gate never read `CREDENCE_DB`, so the documented setup disabled
   it.** `credence/hooks.py` and `credence/observer.py` resolve `CREDENCE_DB`,
   README.md tells users to set it, and `.github/workflows/ci.yml` builds the

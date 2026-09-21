@@ -14,7 +14,7 @@ pip install -e ".[dev,mcp]"
 
 ```bash
 # Full test suite — no API key needed
-pytest tests/ -q                      # 939 tests
+pytest tests/ -q                      # 946 tests
 
 # Smoke test — verifies install and enforcement path
 credence demo
@@ -38,7 +38,7 @@ credence/observer.py          — UserPromptSubmit hook
 credence/hooks.py             — PreToolUse enforcement gate
 credence/memory.py            — cross-session persistence
 credence_gate/src/main.rs     — Rust PreToolUse hook (faster alternative)
-tests/                        — 939 tests (pytest)
+tests/                        — 946 tests (pytest)
 evals/                        — validation studies (some require API key)
 ```
 
@@ -55,7 +55,7 @@ evals/                        — validation studies (some require API key)
   tool, and the Consistency Enforcer all use, so prompt-building and enforcement
   cannot disagree. `tests/unit/test_matcher_parity.py` asserts that.
 - Cross-session memory (snapshot, recall)
-- All 939 tests (`pytest tests/ -q`)
+- All 946 tests (`pytest tests/ -q`)
 
 **Requires API key:**
 - `ContextManager.chat()` (calls Opus 4.7)

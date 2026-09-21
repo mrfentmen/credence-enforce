@@ -41,11 +41,10 @@ Exit codes: always 0 — observer never blocks.
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 
-from credence.matching import resolve_session_id
+from credence.matching import resolve_db_path, resolve_session_id
 
 
 # ── Uncertainty markers — authoritative copy lives in context_manager.py.
@@ -200,7 +199,9 @@ def main() -> int:
     if not text:
         return 0
 
-    db_path    = os.environ.get("CREDENCE_DB", "epistemic_registry.db")
+    # Shared resolver — must agree with hooks.py, the MCP server, and the Rust
+    # gate, or this registers constraints where the gate never looks.
+    db_path    = resolve_db_path()
     session_id = resolve_session_id()
 
     # No existence check: observe() constructs the registry lazily, and only
