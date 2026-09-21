@@ -471,7 +471,12 @@ if _FASTMCP_AVAILABLE:
 
         Call BEFORE write_file, execute_code, send_request, deploy, or any
         tool that would embed a user-stated value into code or infrastructure.
-        Uses synonym-expansion to catch paraphrase overlap ("how fast" ↔ "rate limit").
+        Scored by `credence.matching` — the same decision the `PreToolUse` hook
+        makes, so this tool and the hook cannot return different verdicts for
+        the same input. The match is on a shared numeric value or on literal
+        shared terms after identifier splitting, not on synonym clusters: see
+        the module docstring in `credence/matching.py` for why clusters are
+        excluded from a decision that blocks a write.
 
         Args:
             tool_name:           Name of the tool about to be called.

@@ -142,8 +142,18 @@ fn expand_tokens<'a>(
 }
 
 fn resolve_db_path() -> String {
-    // Match Python MCP server: CREDENCE_DB_PATH (canonical) → CREDENCE_REGISTRY_PATH (legacy) → default
+    // Match the Python side exactly. hooks.py and observer.py — the two layers
+    // this binary replaces — resolve CREDENCE_DB, and SECURITY.md tells users to
+    // set it. This binary previously read only CREDENCE_DB_PATH and
+    // CREDENCE_REGISTRY_PATH, so a user who followed the documented setup had
+    // this gate open a different, empty database, find no constraints, and allow
+    // every write. Enforcement looked installed and was inert.
+    //
+    // Chain matches mcp_server.py: CREDENCE_DB_PATH (canonical) → CREDENCE_DB
+    // (what hooks.py / observer.py use) → CREDENCE_REGISTRY_PATH (legacy) →
+    // default.
     std::env::var("CREDENCE_DB_PATH")
+        .or_else(|_| std::env::var("CREDENCE_DB"))
         .or_else(|_| std::env::var("CREDENCE_REGISTRY_PATH"))
         .unwrap_or_else(|_| DB_PATH.to_string())
 }

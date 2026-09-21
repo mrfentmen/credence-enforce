@@ -45,6 +45,21 @@ package metadata changed; the import package is still `credence`.
   model express uncertainty instead of asserting a value as fact, so on code —
   most of what a coding agent sees — it was silent. It now delegates to
   `credence.matching`.
+- **The Rust gate never read `CREDENCE_DB`, so the documented setup disabled
+  it.** `credence/hooks.py` and `credence/observer.py` resolve `CREDENCE_DB`,
+  README.md tells users to set it, and `.github/workflows/ci.yml` builds the
+  crate as a drop-in for those two layers. The binary resolved
+  `CREDENCE_DB_PATH` → `CREDENCE_REGISTRY_PATH` → default instead. A user who
+  followed the README had the gate open a different, empty database, find no
+  constraints, and allow every write — enforcement that looks installed and is
+  inert. The chain now matches `mcp_server.py`, which already read all three.
+
+  The same binary also carries the identifier-blind tokeniser: it filters on
+  `w.len() > 2` after `split_whitespace()`, so `RATE_LIMIT` is one token and
+  `SYNONYM_CLUSTERS` has no `rate_limit` entry to bridge it. This is a code
+  reading, not a measurement — `cargo` is not available on the machine this was
+  written on, so the binary was never executed. `tests/unit/test_rust_gate_parity.py`
+  asserts the agreement and skips until the crate is built.
 - **The observer silently registered nothing on a fresh install** — it returned
   early instead of writing the constraint, so the gate downstream had nothing to
   enforce.
@@ -77,6 +92,11 @@ package metadata changed; the import package is still `credence`.
 - Runnable `examples/quickstart.py` and `examples/hook_demo.py`, plus
   `tests/unit/test_examples.py` which executes them (the previous `examples/`
   were four scripts importing a nonexistent `esm` module).
+- `tests/unit/test_rust_gate_parity.py` — the fourth enforcement path is the
+  Rust binary, and nothing compared it to the Python side. Asserts the gate
+  blocks and allows the same corpus rows as `credence/matching.py`, and that it
+  honours `CREDENCE_DB`. Skips unless `credence_gate/target/release/credence-gate`
+  exists.
 - `tests/unit/test_matcher_parity.py` — asserts the enforcement paths agree with
   each other on a shared corpus. A test per implementation cannot catch four
   implementations disagreeing; only running them against the same input can.
