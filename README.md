@@ -98,7 +98,7 @@ After you confirm: `"Confirmed — rate limit is 100 req/min per stripe.com/docs
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|NotebookEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [{ "type": "command", "command": "python3 -m credence.hooks" }]
       }
     ]
@@ -143,6 +143,20 @@ credence: blocked Edit — 2 unverified value(s)
 
 Once verified, the gate clears.
 
+### Which tools are gated
+
+Only tools that can persist a value: `Write`, `Edit`, `MultiEdit`,
+`NotebookEdit`, `Bash`. Read-only tools (`Read`, `Grep`, `Glob`, `WebSearch`,
+`Task`, `NotebookRead`, …) are never blocked — reading is not irreversible, so
+an unverified number appearing in a `Read` argument is not a write that needs
+verifying.
+
+The list lives in `credence/matching.py` as `ENFORCED_TOOLS`, and every install
+snippet and `matcher` regex is derived from it, so the gate and the docs cannot
+disagree. `tests/unit/test_matcher_parity.py` pins that — all four hand-written
+copies of this regex once omitted `MultiEdit`, a file-writing tool that then
+bypassed the gate entirely in the documented setup.
+
 ---
 
 ## What Credence does NOT do
@@ -163,7 +177,7 @@ Validated across 7 open-weight models (Qwen, Mistral, Llama, Phi, Gemma) from 5 
 credence demo                     # smoke test, no API key
 credence stats                    # false-positive rate from real gate usage
 credence feedback 1|2|3           # tag last gate block: correct / noise / skip
-python3 -m pytest tests/ -q       # 946 tests, no API key required
+python3 -m pytest tests/ -q       # 956 tests, 4 skipped, no API key required
 python3 -m evals.latency_report   # P50/P95/P99
 ```
 
@@ -186,7 +200,7 @@ credence/         pip-installable package
   mcp_server.py   17-tool MCP server
   registry.py     SQLite constraint store
   memory.py       cross-session persistence
-tests/            946 tests, no API key required
+tests/            956 tests, 4 skipped, no API key required
 evals/            validation studies + multi-model benchmarks
 docs/             technical report, architecture, ETP spec
 credence_gate/    Rust gate (alternative to Python hooks.py)

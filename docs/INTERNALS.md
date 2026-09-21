@@ -876,7 +876,7 @@ idempotency, project_status, and memory exclusion on verify.
 {
   "hooks": {
     "PreToolUse": [{
-      "matcher": "Write|Edit|Bash|NotebookEdit",
+      "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
       "hooks": [{"type": "command", "command": "credence-gate"}]
     }]
   }

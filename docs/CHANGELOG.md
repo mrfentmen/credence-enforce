@@ -96,6 +96,26 @@ package metadata changed; the import package is still `credence`.
   keep their original budgets; only the statistic changed. Verified under six
   concurrent CPU burners, and by mutation: making `wrap()` 3ms slower still
   fails the test (min 4.31ms against the 2.0ms budget).
+- **The gate blocked read-only tools.** The Python hook carried no
+  enforced-tool list at all, so it scored every tool name and every argument.
+  One prompt containing a plausible value ("the timeout is 30 seconds")
+  registered `30`, and from then on a `Read` with `offset=30`, a `Grep` for
+  `"100"`, a `Glob` pattern, `WebSearch`, `TodoWrite` — any read-only call whose
+  arguments happened to contain that number — exited 2. Enforcement now applies
+  only to tools that can persist a value (`Write`, `Edit`, `MultiEdit`,
+  `NotebookEdit`, `Bash`), which is what the Rust gate already did and what
+  `docs/VISION.md` states: gate the action, not the text. Measured after the
+  fix: 5 writing tools block, 7 read-only tools allow, and a write with no
+  unverified value still allows.
+- **`MultiEdit` bypassed enforcement in the documented setup.** All four
+  hand-written `matcher` regexes — `README.md`, `docs/INTERNALS.md`,
+  `credence/hooks.py`, and the `credence install` snippet — read
+  `Write|Edit|Bash|NotebookEdit` and omitted `MultiEdit`, a tool that writes
+  files. The docs are not a fallback here: `credence install` exits before
+  printing the snippet when Rust is absent, so copying the docs is the only
+  path for anyone without a Rust toolchain, and that path gated four of five
+  writing tools. The list now lives once, as `ENFORCED_TOOLS` in
+  `credence/matching.py`, and every snippet and regex is derived from it.
 - Docs: license badge said MIT while the project ships Apache 2.0; test counts
   said 829 against 898 actual.
 
@@ -119,6 +139,14 @@ package metadata changed; the import package is still `credence`.
   Pinned by mutation: restoring the gate's original matcher fails the tests,
   including the hook-versus-gate comparison; restoring the enforcer's original
   tokenizer fails the code-shaped corpus rows.
+- `tests/unit/test_matcher_parity.py` also pins the **tool scope**: the Rust
+  `enforced_tools` literal, every documented `matcher` regex, and
+  `credence.matching.ENFORCED_TOOLS` must gate the same set of tools. It
+  compares what each matcher *gates* rather than its literal text, because
+  alternation order carries no meaning in a regex — the first version compared
+  strings and failed on a mere reorder, which only teaches people to ignore a
+  test. Pinned by mutation: dropping `MultiEdit` from `README.md` fails and
+  names `['MultiEdit']`; reordering the same regex passes.
 - `evaluate(..., expand_synonyms=True)` — the enforcer's recall-first mode, as an
   argument rather than a second matcher. Blocking keeps the literal-only rule
   (expanding both sides lets one shared cluster key satisfy the threshold by

@@ -4,8 +4,10 @@ credence/hooks.py
 Claude Code PreToolUse hook for automatic epistemic enforcement.
 
 When configured in .claude/settings.json, this script intercepts every
-Write/Edit/Bash/NotebookEdit tool call and checks whether its arguments
-overlap with any unverified constraint in the Credence registry.
+Write/Edit/MultiEdit/Bash/NotebookEdit tool call and checks whether its
+arguments overlap with any unverified constraint in the Credence registry.
+Reads are never gated: only the tools in matching.ENFORCED_TOOLS are, and a
+tool this hook does not recognise passes straight through.
 
 If overlap is found (≥2 non-stopword terms), the hook exits non-zero and
 Claude Code blocks the tool call — printing a warning to the user instead.
@@ -20,7 +22,7 @@ Setup (add to your project's .claude/settings.json):
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|NotebookEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
@@ -58,6 +60,7 @@ import sys
 
 from credence.matching import (
     evaluate_constraints,
+    is_enforced_tool,
     resolve_db_path,
     resolve_session_id,
 )
@@ -118,6 +121,19 @@ def main() -> int:
 
     tool_name  = payload.get("tool_name", payload.get("name", "unknown"))
     tool_input = payload.get("tool_input", payload.get("input", {}))
+
+    # --- Only writing tools are gated ---------------------------------------
+    # Defense in depth. The documented settings.json restricts this hook with
+    # `"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash"`, but a matcher is
+    # configuration a user can omit, broaden, or get wrong — and without this
+    # check the hook scored every tool name and argument, so a registered value
+    # turned every read-only call containing that number into a block. Reading
+    # is not irreversible (docs/VISION.md: "gate the action, not the text").
+    #
+    # Exits before opening the registry: this runs on every tool call.
+    if not is_enforced_tool(tool_name):
+        return 0
+
     action_text = f"{tool_name} {_flatten(tool_input)}"
 
     # --- Locate registry ----------------------------------------------------

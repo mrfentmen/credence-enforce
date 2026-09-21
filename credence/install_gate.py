@@ -22,6 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from credence.matching import enforced_tool_matcher
+
 
 def _cargo_available() -> bool:
     return shutil.which("cargo") is not None
@@ -89,17 +91,20 @@ def main() -> int:
     print(f"✅  credence-gate installed → {dest}")
     print()
     print("Add to .claude/settings.json:")
-    print("""  {
-    "hooks": {
-      "UserPromptSubmit": [{
-        "hooks": [{"type": "command", "command": "python3 -m credence.observer"}]
-      }],
-      "PreToolUse": [{
-        "matcher": "Write|Edit|Bash|NotebookEdit",
-        "hooks": [{"type": "command", "command": "credence-gate"}]
-      }]
-    }
-  }
+    # Derived from ENFORCED_TOOLS so the installed config cannot disagree with
+    # the list the gate actually enforces. Hand-written, it omitted MultiEdit —
+    # a file-writing tool that then bypassed the gate.
+    print(f"""  {{
+    "hooks": {{
+      "UserPromptSubmit": [{{
+        "hooks": [{{"type": "command", "command": "python3 -m credence.observer"}}]
+      }}],
+      "PreToolUse": [{{
+        "matcher": "{enforced_tool_matcher()}",
+        "hooks": [{{"type": "command", "command": "credence-gate"}}]
+      }}]
+    }}
+  }}
 
   UserPromptSubmit: passive observer — registers uncertain values automatically.
   PreToolUse: enforcement gate — blocks writes containing unverified values.""")

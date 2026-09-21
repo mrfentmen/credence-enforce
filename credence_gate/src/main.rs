@@ -321,7 +321,12 @@ fn main() {
     let tool_name = hook.tool_name.as_deref().unwrap_or("unknown");
 
     // Only enforce on write-side tools
-    let enforced_tools = ["Write", "Edit", "Bash", "NotebookEdit", "MultiEdit"];
+    // Must match ENFORCED_TOOLS in credence/matching.py — the Python hook
+    // carries the same list, and it is shared policy for the same reason the
+    // registry path is: the two gates disagreeing means one of them enforces
+    // something the other does not. tests/unit/test_matcher_parity.py parses
+    // this literal and fails if the two lists drift apart.
+    let enforced_tools = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"];
     if !enforced_tools.contains(&tool_name) {
         std::process::exit(0);
     }

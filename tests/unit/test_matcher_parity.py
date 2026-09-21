@@ -31,9 +31,11 @@ Coverage:
   P5 The enforcement modules all share one matcher object, not four copies
   P6 The deleted duplicates have not come back
   P7 Every layer resolves the same registry file from the same environment
+  P8 Every layer agrees on WHICH TOOLS are gated, and reads are never gated
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -309,3 +311,132 @@ def test_private_matcher_copies_have_not_returned():
         "mcp_server._AUTOVERIFY_STOPWORDS is back — a second stopword list "
         "means a second definition of 'same thing'"
     )
+
+
+# ── P8 ───────────────────────────────────────────────────────────────────────
+#
+# The gates also have to agree on which TOOLS they are willing to score. They
+# did not. The Rust gate carried a list; the Python hook carried none and scored
+# every tool name and argument, so one prompt containing a plausible value put
+# that number in the registry and every read-only call whose arguments happened
+# to contain it — `Read` with offset=30, `Grep` for "100", `Glob
+# "**/*100*.py"`, `WebSearch`, `TodoWrite` — was blocked. Enforcement that
+# blocks reading is enforcement people uninstall.
+
+READ_ONLY_TOOLS = [
+    "Read", "Grep", "Glob", "WebSearch", "WebFetch",
+    "TodoWrite", "Task", "NotebookRead", "BashOutput",
+]
+
+
+def _rust_enforced_tools() -> set[str]:
+    """Parse the tool list out of credence_gate/src/main.rs.
+
+    Read as source, not as behaviour: this runs on machines without cargo, and
+    a compiled Rust gate that scores a different tool set than the Python hook
+    is precisely the drift being guarded against.
+    """
+    src = (ROOT / "credence_gate" / "src" / "main.rs").read_text(encoding="utf-8")
+    match = re.search(
+        r"let\s+enforced_tools\s*=\s*\[([^\]]*)\]", src
+    )
+    assert match, "could not find `let enforced_tools = [...]` in main.rs"
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def test_rust_gate_and_python_hook_gate_the_same_tools():
+    """Two gates, one tool policy."""
+    assert _rust_enforced_tools() == matching.ENFORCED_TOOLS, (
+        "the Rust gate and the Python hook disagree on which tools to enforce: "
+        f"rust={sorted(_rust_enforced_tools())} "
+        f"python={sorted(matching.ENFORCED_TOOLS)}"
+    )
+
+
+def test_every_writing_tool_is_enforced():
+    """The list cannot silently shrink.
+
+    Guarding the guard: an allowlist is only as good as its contents, and
+    dropping a name from it turns a whole class of writes back into a
+    pass-through.
+    """
+    for tool in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"):
+        assert matching.is_enforced_tool(tool), f"{tool} writes but is not gated"
+    for tool in READ_ONLY_TOOLS:
+        assert not matching.is_enforced_tool(tool), f"{tool} is read-only but gated"
+
+
+@pytest.mark.parametrize("tool", READ_ONLY_TOOLS)
+def test_read_only_tools_are_never_blocked(tmp_path, tool):
+    """Regression: a number in the prompt used to block every read.
+
+    The constraint below carries the literal 30. Reading a file at offset=30 is
+    not an irreversible action (docs/VISION.md: "gate the action, not the
+    text"), so the hook must exit 0 — and must do so without consulting the
+    registry at all.
+    """
+    db = tmp_path / "readonly.db"
+    sid = "readonly-session"
+    CredenceRegistry(db_path=str(db)).register(CONSTRAINT, sid, j_score=0.3, zone="LOW")
+
+    proc = _run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": sid,
+            "tool_name": tool,
+            "tool_input": {"file_path": "99.md", "offset": 30, "pattern": "100"},
+        },
+        db,
+        sid,
+    )
+    assert proc.returncode == 0, (
+        f"{tool} is read-only but was blocked (exit {proc.returncode})\n"
+        f"stderr: {proc.stderr[:400]}"
+    )
+
+
+@pytest.mark.parametrize("path,needle", [
+    ("README.md", "matcher"),
+    ("docs/INTERNALS.md", "matcher"),
+    ("credence/hooks.py", "matcher"),
+])
+def test_documented_matcher_covers_every_enforced_tool(path, needle):
+    """Every hand-written `matcher` must gate every tool that writes.
+
+    All four copies of this regex omitted `MultiEdit`, so a tool that writes
+    files bypassed enforcement in the setup the docs tell people to use. The
+    install snippet is now derived from ENFORCED_TOOLS; the prose copies are
+    checked here.
+
+    Compares what the matcher GATES, not its literal text. Alternation order
+    carries no meaning in a regex, so an exact string compare failed on
+    `...|NotebookEdit|Bash` versus `...|Bash|NotebookEdit` — noise that only
+    teaches people to ignore this test. Coverage is the requirement: a matcher
+    reaching every enforcing tool cannot let a write through.
+    """
+    expected = matching.enforced_tool_matcher()
+    text = (ROOT / path).read_text(encoding="utf-8")
+    matchers = re.findall(r'"matcher"\s*:\s*"([^"]+)"', text)
+    assert matchers, f"no {needle} regex found in {path}"
+    for found in matchers:
+        parts = found.split("|")
+        assert all(parts), f"{path} has an empty alternative in {found!r}"
+        missing = sorted(
+            tool
+            for tool in matching.ENFORCED_TOOLS
+            if not any(re.fullmatch(part, tool) for part in parts)
+        )
+        assert not missing, (
+            f"{path} documents matcher {found!r}, which does not gate {missing} "
+            f"— those tools write, so they bypass enforcement in the setup the "
+            f"docs tell people to use (canonical: {expected!r})"
+        )
+        unknown = [
+            part
+            for part in parts
+            if not any(re.fullmatch(part, tool) for tool in matching.ENFORCED_TOOLS)
+        ]
+        assert not unknown, (
+            f"{path} documents matcher alternative(s) {unknown!r} that name no "
+            f"enforced tool"
+        )

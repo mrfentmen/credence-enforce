@@ -82,6 +82,63 @@ MIN_OVERLAP = 2   # minimum shared literal terms to trigger a block
 _MIN_NUM_LEN = 2
 
 # ---------------------------------------------------------------------------
+# Which tools the gate enforces
+# ---------------------------------------------------------------------------
+#
+# The gate exists to stop an unverified value being *committed* somewhere —
+# written into a file, or run in a shell. Reading is not irreversible, and
+# docs/VISION.md states the principle plainly: "gate the action, not the
+# text".
+#
+# This list is shared policy for the same reason the registry path and the
+# session id are: it is one of the things the enforcement layers must agree
+# on, and they did not. The Rust gate carried a list and allowed a ``Read``;
+# the Python hook carried none and scored *every* tool name plus its
+# arguments. So one prompt containing a plausible value ("the timeout is 30
+# seconds") put ``30`` in the registry as a literal, and after that every
+# read-only call whose arguments happened to contain it was blocked: ``Read``
+# with offset=30, ``Grep`` for "100", ``Glob`` "**/*100*.py", ``WebSearch``,
+# ``TodoWrite``. Reads pass through now.
+#
+# Keep in step with ``enforced_tools`` in credence_gate/src/main.rs —
+# tests/unit/test_matcher_parity.py fails if the two lists disagree.
+#
+# Ordered because the same names are rendered into a Claude Code `matcher`
+# regex (see enforced_tool_matcher) and into the docs. The set is derived from
+# the tuple, so lookup and rendering cannot disagree.
+ENFORCED_TOOLS_ORDERED = (
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "Bash",
+)
+
+ENFORCED_TOOLS = frozenset(ENFORCED_TOOLS_ORDERED)
+
+
+def is_enforced_tool(tool_name: str) -> bool:
+    """True when *tool_name* can persist a value somewhere.
+
+    Unknown names are NOT enforced. A gate that blocks tools it does not
+    recognise breaks legitimate work; enforcement is opt-in by name, and the
+    names that write are the ones listed above.
+    """
+    return tool_name in ENFORCED_TOOLS
+
+
+def enforced_tool_matcher() -> str:
+    """The Claude Code ``matcher`` regex for :data:`ENFORCED_TOOLS`.
+
+    Derived rather than written out, because the written-out copies drifted:
+    every install snippet and doc listed ``Write|Edit|Bash|NotebookEdit`` and
+    omitted ``MultiEdit`` — a tool that writes files, and therefore a write
+    that bypassed enforcement entirely in the documented setup.
+    """
+    return "|".join(ENFORCED_TOOLS_ORDERED)
+
+
+# ---------------------------------------------------------------------------
 # Stopwords — canonical copy. Kept identical to context_manager._CE_STOPWORDS
 # (pinned by tests/unit/test_matching.py).
 # ---------------------------------------------------------------------------
