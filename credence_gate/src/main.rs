@@ -318,21 +318,58 @@ fn load_constraints(session_id: &Option<String>) -> Vec<Constraint> {
     rows
 }
 
-fn extract_arguments_text(tool_input: &Option<serde_json::Value>) -> String {
-    match tool_input {
-        None => String::new(),
-        Some(v) => match v {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Object(map) => {
-                // Concatenate all string values from tool input
-                map.values()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ")
+// Mirrors the depth cap in `_flatten`, credence/hooks.py. The cap is
+// load-bearing: a runaway nested payload must not turn the gate into an
+// expensive traversal of the path it exists to keep fast.
+const MAX_FLATTEN_DEPTH: usize = 4;
+
+/// Flatten a JSON value to one string for scanning.
+///
+/// Recursive, and that is the point. This used to map over the object's own
+/// values and keep the ones that were strings, so everything nested — an array
+/// of objects, a nested object, a bare number — was dropped before matching.
+/// `MultiEdit` carries its edit text in `edits`, an array of objects, so for
+/// that tool the gate saw the file path and nothing else and allowed a write
+/// that `credence/hooks.py` blocked on the identical payload. A value has to be
+/// read before it can be matched, and the two enforcing paths have to agree on
+/// what an action contains.
+fn flatten(value: &serde_json::Value, depth: usize, out: &mut String) {
+    if depth > MAX_FLATTEN_DEPTH {
+        return;
+    }
+    match value {
+        serde_json::Value::String(s) => {
+            if !out.is_empty() {
+                out.push(' ');
             }
-            _ => v.to_string(),
+            out.push_str(s);
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values() {
+                flatten(v, depth + 1, out);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for v in items {
+                flatten(v, depth + 1, out);
+            }
+        }
+        other => {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&other.to_string());
         }
     }
+}
+
+fn extract_arguments_text(tool_input: &Option<serde_json::Value>) -> String {
+    let mut out = String::new();
+    match tool_input {
+        None => {},
+        Some(v) => flatten(v, 0, &mut out),
+    }
+    out
 }
 
 fn format_block_message(
