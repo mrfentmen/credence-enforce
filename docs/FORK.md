@@ -74,7 +74,7 @@ Deleted: `credence_runtime/`, `examples/{compliance_logging,dashboard,langchain_
 ## Name collision
 
 The import package is still `credence`. It was **not** renamed, deliberately:
-renaming it would touch every one of the 969 tests and every documented code
+renaming it would touch every one of the 970 tests and every documented code
 example for no functional gain. The consequence is that `credence-enforce` and
 `credence-guard` cannot both be installed in the same environment — they provide
 the same module and the same console scripts. Pick one.

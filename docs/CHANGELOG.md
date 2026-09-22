@@ -212,6 +212,15 @@ package metadata changed; the import package is still `credence`.
   `Write throttle = 25` must NOT block — same domain, different value, reachable
   only through a synonym, which is exactly the verdict the Rust gate used to get
   wrong.
+- `test_rust_gate_shares_the_canonical_thresholds` — `MIN_OVERLAP`, the
+  minimum numeric-literal length, and the flatten depth cap are single integers
+  that decide whether a write is blocked at all, and each existed as an
+  independent copy in Python and Rust. The stopword list had already drifted
+  60-against-78 in both directions before anything compared it, so these are
+  now read out of the Rust source and compared to `matching.MIN_OVERLAP`,
+  `matching._MIN_NUM_LEN`, and `hooks._MAX_FLATTEN_DEPTH` (the last promoted
+  from an inline literal so there is one place to change it). Runs without
+  cargo. Pinned by mutation: changing the Rust `MIN_OVERLAP` to 3 fails it.
 - Real per-tool payload shapes rather than one action string: `TOOL_PAYLOADS`
   and `UNRELATED_PAYLOADS` in `tests/unit/test_matcher_parity.py`, driven
   through the `PreToolUse` hook by P9 and through the Rust binary by X5. A gate

@@ -93,9 +93,17 @@ def _log_event(event: dict) -> None:
 # is why the demo blocked and real hook invocations did not.
 
 
+# Depth cap for _flatten. Named rather than inline because the Rust gate
+# mirrors it (`MAX_FLATTEN_DEPTH` in credence_gate/src/main.rs) and the two
+# have to agree for the paths to see the same bytes; tests/unit/test_matcher_parity.py
+# compares them. A runaway payload must not make the gate expensive either, on
+# the path whose selling point is being fast.
+_MAX_FLATTEN_DEPTH = 4
+
+
 def _flatten(obj, depth: int = 0) -> str:
     """Recursively flatten a JSON object to a single string for scanning."""
-    if depth > 4:
+    if depth > _MAX_FLATTEN_DEPTH:
         return ""
     if isinstance(obj, str):
         return obj

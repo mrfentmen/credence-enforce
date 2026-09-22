@@ -33,6 +33,7 @@ Coverage:
   P7 Every layer resolves the same registry file from the same environment
   P8 Every layer agrees on WHICH TOOLS are gated, and reads are never gated
   P9 Every gated tool's REAL payload shape reaches the matcher [regression]
+  P10 The Rust gate shares the canonical thresholds, not its own copies
 """
 
 import json
@@ -419,6 +420,35 @@ def test_rust_gate_uses_the_canonical_stopword_list():
         f"only_rust={sorted(rust - matching.STOPWORDS)} "
         f"only_python={sorted(matching.STOPWORDS - rust)}"
     )
+
+
+def _rust_const(name: str) -> int:
+    """Read a `const NAME: usize = N;` out of the Rust gate's source.
+
+    Read as source so it runs without cargo, like the stopword and tool checks.
+    """
+    src = (ROOT / "credence_gate" / "src" / "main.rs").read_text(encoding="utf-8")
+    m = re.search(rf"^const {name}\s*:\s*usize\s*=\s*(\d+)\s*;", src, re.M)
+    assert m, f"const {name} not found in credence_gate/src/main.rs"
+    return int(m.group(1))
+
+
+def test_rust_gate_shares_the_canonical_thresholds():
+    """The rules' numbers are policy, and policy was duplicated before.
+
+    `MIN_OVERLAP` and the minimum numeric-literal length decide whether a write
+    is blocked at all, so a copy of either in another language is a divergence
+    waiting to happen: the stopword list had already drifted 60-against-78 in
+    both directions before anything compared it. The flatten depth cap is the
+    same kind of value one layer down — it decides which bytes each path can
+    see, which is exactly what let `MultiEdit` through.
+
+    Every one of these is a single integer. There is no reason for the two
+    implementations to hold different ones, and this fails the moment they do.
+    """
+    assert _rust_const("MIN_OVERLAP") == matching.MIN_OVERLAP
+    assert _rust_const("MIN_NUM_LEN") == matching._MIN_NUM_LEN
+    assert _rust_const("MAX_FLATTEN_DEPTH") == hooks._MAX_FLATTEN_DEPTH
 
 
 def test_every_writing_tool_is_enforced():

@@ -14,7 +14,7 @@ pip install -e ".[dev,mcp]"
 
 ```bash
 # Full test suite — no API key needed
-pytest tests/ -q                      # 969 tests, 9 skipped
+pytest tests/ -q                      # 970 tests, 9 skipped
 
 # The 9 skips are the Rust gate parity tests; they need the release binary.
 # CI builds it and runs them, so they are not skipped there.
@@ -42,7 +42,7 @@ credence/observer.py          — UserPromptSubmit hook
 credence/hooks.py             — PreToolUse enforcement gate
 credence/memory.py            — cross-session persistence
 credence_gate/src/main.rs     — Rust PreToolUse hook (faster alternative)
-tests/                        — 969 tests, 9 skipped (pytest)
+tests/                        — 970 tests, 9 skipped (pytest)
 evals/                        — validation studies (some require API key)
 ```
 
@@ -59,7 +59,7 @@ evals/                        — validation studies (some require API key)
   tool, and the Consistency Enforcer all use, so prompt-building and enforcement
   cannot disagree. `tests/unit/test_matcher_parity.py` asserts that.
 - Cross-session memory (snapshot, recall)
-- All 969 tests, 9 skipped (`pytest tests/ -q`)
+- All 970 tests, 9 skipped (`pytest tests/ -q`)
 
 **Requires API key:**
 - `ContextManager.chat()` (calls Opus 4.7)
