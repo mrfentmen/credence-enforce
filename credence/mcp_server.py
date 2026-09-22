@@ -1139,6 +1139,17 @@ if _FASTMCP_AVAILABLE:
 
 def main():
     if not _FASTMCP_AVAILABLE:
-        print("fastmcp not installed. Run: pip install 'credence-ai[mcp]'")
+        # `fastmcp` is a hard dependency (pyproject.toml, under `dependencies`),
+        # so reaching here means the install is broken or was done with
+        # --no-deps, not that an extra is missing. The message used to say
+        # `pip install 'credence-ai[mcp]'`, which could not work twice over:
+        # the `[mcp]` extra was deliberately removed when fastmcp became a hard
+        # dependency, and the distribution is named `credence-enforce`. That
+        # pointed every user who hit this at a command guaranteed to fail.
+        print(
+            "fastmcp not installed, but it is a required dependency of "
+            "credence-enforce.\n"
+            "Reinstall it with: pip install --force-reinstall credence-enforce"
+        )
         return
     mcp.run()

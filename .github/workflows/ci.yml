@@ -95,3 +95,26 @@ jobs:
 
       - name: Run the Rust gate parity tests
         run: pytest tests/unit/test_rust_gate_parity.py -v --tb=short
+
+  legacy-suite:
+    name: Legacy Script Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # tests/tests.py is a script, not a pytest module: it defines no `test_*`
+      # functions and runs its checks at import time through its own
+      # check()/section() harness. pyproject.toml listed it under
+      # `python_files`, so every pytest run imported the whole file, executed
+      # all of its checks, and discarded the result — 278 PASS/FAIL lines that
+      # could not fail anything. Run as a script, its exit code is the verdict:
+      # 1 when any check fails.
+      - name: Run the legacy suite (exit code is the verdict)
+        run: python tests/tests.py

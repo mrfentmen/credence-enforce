@@ -71,7 +71,14 @@ include = ["credence*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py", "tests.py"]
+# `tests.py` used to be listed here. It cannot be collected: it defines no
+# `test_*` functions, because it is a script that runs its checks at import
+# time through its own `check()`/`section()` harness. Listing it made pytest
+# import the whole 2728-line script on every collection, execute all of its
+# checks, and discard the result — so a suite that fails loudly when run as a
+# script was invisible when run by pytest. It is now executed as a script, by
+# the `legacy-suite` CI job, where its exit code counts.
+python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
