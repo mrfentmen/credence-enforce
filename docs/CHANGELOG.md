@@ -146,6 +146,21 @@ package metadata changed; the import package is still `credence`.
   `OnceLock` for the same reason the rule exists at all: `tokenize` runs once
   per constraint on every tool call, and the gate's budget is single-digit
   milliseconds.
+- **The Rust gate read only the top-level strings of `tool_input`, so
+  `MultiEdit` was never checked.** `extract_arguments_text` mapped over the
+  object's values and kept the ones that were strings. `MultiEdit` carries its
+  edit text in `edits` — an array of objects — so for that tool the argument
+  text was the file path and nothing else, and a write embedding an unverified
+  value was allowed while `credence/hooks.py`, which flattens recursively,
+  blocked the identical payload. Non-string values were dropped the same way,
+  including bare numbers, which is half the blocking rule. Found by CI rather
+  than by reading: the existing corpus handed both paths the same pre-flattened
+  string inside a Write-shaped payload, which is exactly the shape that hides a
+  field the gate never reads. `flatten` now recurses through objects and arrays
+  with the same depth cap as `_flatten`, so the two cannot disagree about what
+  an action contains. Verified by CI on the failing commit: `MultiEdit` was the
+  only tool out of five to disagree (`assert 0 == 2`), because it is the only
+  one whose text is nested.
 - **Nothing ran the Rust parity test, so none of that was visible.**
   `tests/unit/test_rust_gate_parity.py` skips when the release binary is
   absent; the `rust-gate` job built the binary and stopped, and `test` ran in a
@@ -197,6 +212,13 @@ package metadata changed; the import package is still `credence`.
   `Write throttle = 25` must NOT block — same domain, different value, reachable
   only through a synonym, which is exactly the verdict the Rust gate used to get
   wrong.
+- Real per-tool payload shapes rather than one action string: `TOOL_PAYLOADS`
+  and `UNRELATED_PAYLOADS` in `tests/unit/test_matcher_parity.py`, driven
+  through the `PreToolUse` hook by P9 and through the Rust binary by X5. A gate
+  that scores correctly but reads the wrong field blocks nothing, which is
+  invisible to a test that flattens the input for both paths. Both maps must
+  cover every enforced tool, so adding one to the allowlist without a payload to
+  demonstrate its extraction fails rather than passing silently.
 - The `rust-gate` CI job now runs the Rust parity tests after building the
   crate, so those assertions execute against a real binary instead of skipping.
 - `evaluate(..., expand_synonyms=True)` — the enforcer's recall-first mode, as an

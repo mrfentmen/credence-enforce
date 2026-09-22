@@ -29,7 +29,11 @@ Protocol (Claude Code hook protocol):
   - Exit code 2 = BLOCK (with stderr message shown to user)
   - Writes blocking message to stderr
 
-Registry: reads epistemic_registry.db from the current working directory.
+Registry: resolved by credence.matching.resolve_db_path — CREDENCE_DB, then
+CREDENCE_DB_PATH, then CREDENCE_REGISTRY_PATH, then epistemic_registry.db in
+the working directory. This binary read only the *_PATH variables before, so
+the documented CREDENCE_DB pointed the Python layers at one database and this
+gate at a different, empty one.
 */
 
 use std::collections::HashSet;
