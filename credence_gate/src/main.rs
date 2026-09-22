@@ -34,6 +34,7 @@ Registry: reads epistemic_registry.db from the current working directory.
 
 use std::collections::HashSet;
 use std::io::{self, Read};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use serde::Deserialize;
@@ -125,17 +126,22 @@ fn split_identifier(token: &str) -> Vec<String> {
         if chunk.is_empty() {
             continue;
         }
-        let chars: Vec<char> = chunk.chars().collect();
+        // Single pass, no intermediate buffer: this runs per token, on every
+        // tool call, and the gate's budget is single-digit milliseconds.
         let mut cur = String::new();
-        for (i, &c) in chars.iter().enumerate() {
-            if i > 0 && c.is_ascii_uppercase() {
-                let prev = chars[i - 1];
-                if (prev.is_ascii_lowercase() || prev.is_ascii_digit()) && !cur.is_empty() {
+        let mut prev: Option<char> = None;
+        for c in chunk.chars() {
+            if let Some(p) = prev {
+                if c.is_ascii_uppercase()
+                    && (p.is_ascii_lowercase() || p.is_ascii_digit())
+                    && !cur.is_empty()
+                {
                     out.push(cur.to_lowercase());
                     cur.clear();
                 }
             }
             cur.push(c);
+            prev = Some(c);
         }
         if !cur.is_empty() {
             out.push(cur.to_lowercase());
@@ -144,12 +150,26 @@ fn split_identifier(token: &str) -> Vec<String> {
     out
 }
 
+/// Compiled once per process. `Regex::new` compiles the pattern, and tokenize
+/// runs once per constraint on every tool call, so building it per call is work
+/// the gate cannot afford to repeat inside its own hot loop.
+fn punct_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"[^\w\s]").unwrap())
+}
+
+
+fn num_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\b\d+(?:\.\d+)?\b").unwrap())
+}
+
+
 fn tokenize(text: &str, stopwords: &HashSet<&str>) -> HashSet<String> {
     // Punctuation becomes a separator. `_` is a word character, so it survives
     // this pass and is handled by split_identifier — which is what makes
     // RATE_LIMIT score as `rate` and `limit` rather than one dead token.
-    let re = Regex::new(r"[^\w\s]").unwrap();
-    let cleaned = re.replace_all(text, " ");
+    let cleaned = punct_re().replace_all(text, " ");
     let mut out: HashSet<String> = HashSet::new();
     for word in cleaned.split_whitespace() {
         // Keep the whole token alongside its parts, so a constraint that
@@ -178,9 +198,8 @@ fn tokenize(text: &str, stopwords: &HashSet<&str>) -> HashSet<String> {
 fn numbers(text: &str) -> HashSet<String> {
     // The whole match is the digits, so no capture group is needed; converting
     // to an owned String inside the loop keeps this free of borrow subtleties.
-    let re = Regex::new(r"\b\d+(?:\.\d+)?\b").unwrap();
     let mut out: HashSet<String> = HashSet::new();
-    for m in re.find_iter(text) {
+    for m in num_re().find_iter(text) {
         let n = m.as_str();
         if n.chars().count() >= MIN_NUM_LEN {
             out.insert(n.to_string());

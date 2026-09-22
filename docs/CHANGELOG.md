@@ -116,6 +116,44 @@ package metadata changed; the import package is still `credence`.
   path for anyone without a Rust toolchain, and that path gated four of five
   writing tools. The list now lives once, as `ENFORCED_TOOLS` in
   `credence/matching.py`, and every snippet and regex is derived from it.
+- **The Rust gate reached different verdicts than the Python hook on the same
+  write.** `credence_gate/` is offered as a faster drop-in for
+  `credence/hooks.py`, which makes it a second implementation of the blocking
+  decision — and it had been written independently. Five divergences, each of
+  which changes the answer for some write:
+
+  - no identifier splitting for camelCase — the tokeniser lowered before
+    splitting, so `stripeClientRateLimit` stayed one dead token and only the
+    numeric rule could rescue it. This is the one the CI run caught first, on
+    `Write stripeClientRateLimit = 100`;
+  - no numeric-value rule at all, so `Write TIMEOUT = 100` against a constraint
+    about a `100 req/min` rate limit was allowed here and blocked there;
+  - synonym-cluster agreement counted as blocking evidence, where the canonical
+    matcher excludes it — expanding both sides lets one shared cluster key
+    satisfy the threshold on its own, so same-domain writes carrying unrelated
+    values blocked here and passed there;
+  - a 60-word stopword list against the canonical 78, differing in both
+    directions: it stopped code words the canonical list scores ("write",
+    "file", "code", "function", "method") and scored 45 the canonical list
+    stops ("think", "know", "want", "is", "of", "size", "error");
+  - its usage docstring advertised `Write|Edit|Bash|NotebookEdit` — the sixth
+    and last copy of that regex, and the last one still omitting `MultiEdit`.
+    That is the snippet users copy out of the file that installs the gate.
+
+  All five now follow `credence/matching.py`. The tokeniser splits identifiers
+  by scanning rather than with `(?<=[a-z0-9])(?=[A-Z])`, because the Rust
+  `regex` crate has no lookaround. The pattern cache is hoisted into
+  `OnceLock` for the same reason the rule exists at all: `tokenize` runs once
+  per constraint on every tool call, and the gate's budget is single-digit
+  milliseconds.
+- **Nothing ran the Rust parity test, so none of that was visible.**
+  `tests/unit/test_rust_gate_parity.py` skips when the release binary is
+  absent; the `rust-gate` job built the binary and stopped, and `test` ran in a
+  separate job with no binary. The file skipped everywhere, CI included, and
+  its own docstring recorded that wiring it up "has deliberately not been
+  made" — which is how a test that cannot fail comes to look like a test. The
+  job now installs Python and runs it, and the failures above are what came
+  back.
 - Docs: license badge said MIT while the project ships Apache 2.0; test counts
   said 829 against 898 actual.
 
@@ -146,7 +184,21 @@ package metadata changed; the import package is still `credence`.
   alternation order carries no meaning in a regex — the first version compared
   strings and failed on a mere reorder, which only teaches people to ignore a
   test. Pinned by mutation: dropping `MultiEdit` from `README.md` fails and
-  names `['MultiEdit']`; reordering the same regex passes.
+  names `['MultiEdit']`; reordering the same regex passes. `credence_gate/src/main.rs`
+  is in that list too — its usage docstring was the sixth copy of the regex and
+  the last one still missing `MultiEdit`.
+- `test_rust_gate_uses_the_canonical_stopword_list` — parses the Rust stopword
+  literal and compares it to `matching.STOPWORDS`. Read as source, so it runs
+  on machines without cargo; the two lists differed in both directions for as
+  long as nothing compared them.
+- Corpus rows that isolate the Rust matcher's divergence classes rather than
+  catching them as a side effect: `Write stripeClientRateLimit = 999` blocks
+  only if identifiers are split (its value is not the constraint's), and
+  `Write throttle = 25` must NOT block — same domain, different value, reachable
+  only through a synonym, which is exactly the verdict the Rust gate used to get
+  wrong.
+- The `rust-gate` CI job now runs the Rust parity tests after building the
+  crate, so those assertions execute against a real binary instead of skipping.
 - `evaluate(..., expand_synonyms=True)` — the enforcer's recall-first mode, as an
   argument rather than a second matcher. Blocking keeps the literal-only rule
   (expanding both sides lets one shared cluster key satisfy the threshold by

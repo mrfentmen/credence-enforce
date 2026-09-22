@@ -838,7 +838,9 @@ Cross-session epistemic memory module. `CredenceMemory` wraps `CredenceRegistry`
 Compiled Rust binary: `credence-gate`. Replaces `python3 -m credence.hooks` as the Claude Code PreToolUse hook.
 - **98× faster than Python hook: 331ms → 3.4ms** per tool call
 - At 100 tool calls/session: 33s Python overhead → 0.34s Rust overhead
-- Reads `epistemic_registry.db` from CWD; implements same synonym-expansion as Python hook (32 clusters)
+- Resolves the registry the way the Python layers do (`CREDENCE_DB_PATH` → `CREDENCE_DB` → `CREDENCE_REGISTRY_PATH` → `epistemic_registry.db` in CWD). It previously read only the first and third, so the documented `CREDENCE_DB` left it opening an empty database
+- Decides with the same rules as `credence/matching.py`: identifier-aware tokenising (snake_case and camelCase) and the shared-numeric-value rule, with **no** synonym expansion — the canonical matcher excludes synonym agreement from blocking, and this gate only ever blocks
+- `tests/unit/test_rust_gate_parity.py` compares its verdicts against the canonical matcher on a shared corpus, and runs in the `rust-gate` CI job where the binary exists
 - BLOCK path: exit code 2 + stderr message (Claude Code protocol)
 - ALLOW path: exit code 0
 - Build: `source "$HOME/.cargo/env" && cargo build --release` in `credence_gate/`

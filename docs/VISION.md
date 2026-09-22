@@ -44,7 +44,7 @@ Five checkpoints, each encoding a distinct architectural principle:
 
 - **CP3 — Generation-Time Scanner:** Annotates numeric and string literals in generated code and prose with confidence tiers (HIGH RISK / UNVERIFIED / CHECK) derived from the live registry. Catches `RATE_LIMIT = 50`, `ALGORITHM = "RS256"`, `BASE_URL = "/api/v2"`. *Principle: enforcement must extend to the artifact, not just the conversation.*
 
-- **CP4 — Rust Gate (3.4ms, 98× faster than Python, 0% FP rate):** Native PreToolUse hook. Blocks Write/Edit/Bash when tool arguments overlap unverified constraints. *Principle: irreversible actions are where epistemic errors become real costs — gate the action, not the text.*
+- **CP4 — Rust Gate (3.4ms, 98× faster than Python, 0% FP rate):** Native PreToolUse hook. Blocks Write/Edit/MultiEdit/NotebookEdit/Bash when tool arguments overlap unverified constraints. *Principle: irreversible actions are where epistemic errors become real costs — gate the action, not the text.*
 
 - **CP5 — Epistemic Memory:** Cross-session constraint registry with certainty trajectories and confidence decay. CS-FCR 40% (no memory) → 0% (Credence Memory), n=20 callbacks. *Principle: epistemic state is session-persistent by nature, not by accident of context window size.*
 
