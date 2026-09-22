@@ -288,6 +288,20 @@ _GTS_CODE_BLOCK  = re.compile(r'(```[^\n]*\n)(.*?)(```)', re.DOTALL)
 _GTS_SKIP_PREFIXES = ("def ", "class ", "import ", "from ", "//", "/*", "*", "#", "@")
 # Prose scanner: split on sentence-ending punctuation followed by whitespace/EOL.
 _GTS_SENTENCE_SPLIT = re.compile(r'(?<=[.!?])\s+')
+
+# The markers this code actually emits are "⚠ CREDENCE[unverified]: …",
+# "⚠⚠ CREDENCE[stale]: …", and "# CREDENCE[inherited from x, unverified]".
+# The duplicate-suppression guards used to test for the literal "CREDENCE:",
+# which occurs in none of them — the only place that string appears is an older
+# marker format still quoted in the docstrings above. So every "already
+# annotated, skip it" check was dead, and re-annotating annotated text appended
+# a second marker rather than skipping it.
+_GTS_MARKER_TOKEN = "CREDENCE["
+
+
+def has_credence_marker(text: str) -> bool:
+    """True if `text` already carries a Credence annotation."""
+    return _GTS_MARKER_TOKEN in text
 # String literal scanner: extract quoted strings from constraint content.
 # Two sub-patterns:
 #   _GTS_STR_EXTRACT: matches any quoted string 3-80 chars (captures spaces too)
@@ -1934,7 +1948,7 @@ class ContextManager:
                 stripped = line.strip()
                 if (
                     not stripped
-                    or "CREDENCE:" in line
+                    or has_credence_marker(line)
                     or stripped.startswith(_GTS_SKIP_PREFIXES)
                 ):
                     out.append(line)
@@ -2001,7 +2015,7 @@ class ContextManager:
             sentences = _GTS_SENTENCE_SPLIT.split(prose)
             out: list[str] = []
             for sent in sentences:
-                if "CREDENCE:" in sent:
+                if has_credence_marker(sent):
                     out.append(sent)
                     continue
                 annotated = sent

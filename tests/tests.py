@@ -2664,9 +2664,27 @@ class StripeClient:
         code_to_scan = '```python\nRATE_LIMIT = 100\n```'
         annotated, hits = _scan_output(code_to_scan, reg2, "s32_ann", turn=0)
 
-        check("S32-D1 self_probe source annotated with AI-generated tier",
-              any("AI-generated" in h.get("line","") for h in hits),
-              f"hits={hits}")
+        # S32-D1 originally asserted that the annotated line quotes the internal
+        # `[AI-generated:…]` prefix. It does not, deliberately: _annotation in
+        # mcp_server.py strips that prefix, and hooks.py and __main__.py strip it
+        # with the same regex, because it is bookkeeping for the registry rather
+        # than something to print into a user's source. The documented marker
+        # vocabulary is `⚠⚠ CREDENCE[stale]` and `⚠ CREDENCE[unverified]`, and
+        # `source="self_probe"` takes the second.
+        #
+        # The check now pins the contract instead, and pins two defects that
+        # were live when it was written: one value produced TWO hits (the code
+        # body was re-scanned as prose, because _GTS_CODE_BLOCK captures groups
+        # and re.split returns the body as a segment), and the second hit's line
+        # carried the marker twice (every "already annotated" guard tested for
+        # the literal "CREDENCE:", which no emitted marker contains).
+        check("S32-D1 self_probe value annotated once, with a CREDENCE tier, "
+              "internal prefix not echoed",
+              len(hits) == 1
+              and annotated.count("CREDENCE[") == 1
+              and "[AI-generated:" not in annotated
+              and any("CREDENCE[" in h.get("line", "") for h in hits),
+              f"hits={hits} annotated={annotated!r}")
 
     finally:
         _os.unlink(_ann_db)

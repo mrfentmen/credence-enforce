@@ -55,6 +55,7 @@ from .context_manager import (
     _GTS_CODE_BLOCK,
     _GTS_SKIP_PREFIXES,
     _GTS_SENTENCE_SPLIT,
+    has_credence_marker,
 )
 from .matching import evaluate_constraints, resolve_db_path
 from .registry import CredenceRegistry
@@ -205,7 +206,7 @@ def _scan_output(output_text: str, registry: CredenceRegistry, session_id: str, 
             if any(line.lstrip().startswith(p) for p in _GTS_SKIP_PREFIXES):
                 out.append(line)
                 continue
-            if "CREDENCE:" in line:
+            if has_credence_marker(line):
                 out.append(line)
                 continue
             for val, c in value_map.items():
@@ -225,7 +226,7 @@ def _scan_output(output_text: str, registry: CredenceRegistry, session_id: str, 
         if annotated_vars:
             out2 = []
             for line in out:
-                if "CREDENCE:" in line:
+                if has_credence_marker(line):
                     out2.append(line)
                     continue
                 if any(line.lstrip().startswith(p) for p in _GTS_SKIP_PREFIXES):
@@ -251,18 +252,28 @@ def _scan_output(output_text: str, registry: CredenceRegistry, session_id: str, 
 
     result = _GTS_CODE_BLOCK.sub(annotate_code_block, result)
 
-    # Pass 2 — prose (non-code segments)
-    segments = _GTS_CODE_BLOCK.split(result)
-    prose_out = []
-    for seg in segments:
-        if seg.startswith("```") or seg.endswith("```"):
-            prose_out.append(seg)
-            continue
-        sentences = _GTS_SENTENCE_SPLIT.split(seg)
-        new_sents = []
+    # Pass 2 — prose. Strictly the text the code-block pass did not rewrite.
+    #
+    # `_GTS_CODE_BLOCK` has three capturing groups, so `re.split` returns the
+    # code body as a segment of its own — and the old guard could not tell a
+    # body from prose, because it only skipped segments that started or ended
+    # with a fence. Every fenced literal was therefore scanned a second time, so
+    # a single value produced two hits, one labelled "code" and one labelled
+    # "prose", and the second one re-annotated the line the first had already
+    # annotated. Walking the matches by span makes the boundary exact; this is
+    # the same walk `ContextManager._scan_output` already did.
+    #
+    # The prose the pass produces is also returned. It used to be assembled into
+    # a local named `prose_out`, never read, and dropped on the floor — so a
+    # value found in prose was reported in `hits` and left unannotated in the
+    # text, which is half of what the tool promises.
+    def annotate_prose(segment: str) -> str:
+        sentences = _GTS_SENTENCE_SPLIT.split(segment)
+        out: list[str] = []
+        changed = False
         for sent in sentences:
-            if "CREDENCE:" in sent:
-                new_sents.append(sent)
+            if has_credence_marker(sent):
+                out.append(sent)
                 continue
             for val, c in value_map.items():
                 if re.search(r'\b' + re.escape(val) + r'\b', sent):
@@ -271,13 +282,22 @@ def _scan_output(output_text: str, registry: CredenceRegistry, session_id: str, 
                                  "constraint_text": c.get("content","")[:80],
                                  "line": sent.strip(), "eff_conf": c.get("eff_conf",0.5),
                                  "source": "prose"})
+                    changed = True
                     break
-            new_sents.append(sent)
-        prose_out.append(" ".join(new_sents))
+            out.append(sent)
+        # Rejoining is lossy — the sentence splitter consumes the whitespace —
+        # so leave a segment that nothing matched exactly as it was.
+        return "  ".join(out) if changed else segment
 
-    # prose_out will have interleaved code+prose; simplest: just return result from code pass
-    # (prose pass on the already-annotated result is correct)
-    return result, hits
+    parts: list[str] = []
+    last = 0
+    for match in _GTS_CODE_BLOCK.finditer(result):
+        parts.append(annotate_prose(result[last:match.start()]))
+        parts.append(match.group(0))  # code block, already annotated above
+        last = match.end()
+    parts.append(annotate_prose(result[last:]))
+
+    return "".join(parts), hits
 
 
 # ---------------------------------------------------------------------------

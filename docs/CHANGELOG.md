@@ -169,6 +169,52 @@ package metadata changed; the import package is still `credence`.
   made" — which is how a test that cannot fail comes to look like a test. The
   job now installs Python and runs it, and the failures above are what came
   back.
+- **A 304-check suite ran on every test job and could not fail any of them.**
+  `tests/tests.py` is a script, not a pytest module: it defines no `test_*`
+  functions and runs its checks at import time through its own
+  `check()`/`section()` harness. `pyproject.toml` listed it under `python_files`
+  anyway, so every `pytest tests/` run imported the whole 2728-line file,
+  executed all of its checks, and discarded the result — 278 PASS/FAIL lines
+  against 981 collected tests, none of them from this file. Run as a script it
+  reported **52 failures**. It is out of `python_files`, and a `legacy-suite` CI
+  job runs it as a script, where the exit code is the verdict. With the real
+  dependency present the true state was 304 checks: 278 passed, 15 failed, 11
+  skipped — and 14 of those 15 were the next entry.
+- **`credence/providers.py` imported `requests` at module scope without it being
+  declared anywhere.** `pip install credence-enforce` then
+  `import credence.providers` raised `ModuleNotFoundError`, so the module was
+  unusable from a clean install. It is now declared in the `api` and `dev`
+  extras, and imported lazily inside the hf/groq client — the treatment
+  `anthropic` already got in the same file, and what README.md already promised
+  ("imported only when a model call is actually made"). The failure names the
+  extra instead of a bare import error. This one import blanket-failed 14 checks
+  across two suites, because both wrap their bodies in `except Exception`.
+- **The `"already annotated, skip it"` guards checked for a string nothing
+  emits.** All five — three in `mcp_server.py`, two in `context_manager.py` —
+  tested `"CREDENCE:" in line`. Every marker this code produces is
+  `CREDENCE[unverified]:`, `CREDENCE[stale]:`, or
+  `CREDENCE[inherited from x, unverified]`, none of which contains that
+  substring; the only place it appears is an older marker format still quoted in
+  a docstring. So re-annotating annotated text appended a second marker instead
+  of skipping. `has_credence_marker()` in `context_manager.py` now tests the real
+  prefix, and `tests/unit/test_scan_annotation.py` pins it.
+- **`credence_scan` reported two hits for every fenced literal.**
+  `_GTS_CODE_BLOCK` has three capturing groups, so `re.split` returns the code
+  body as a segment of its own — and the pass-2 guard only skipped segments that
+  started or ended with a fence, so the body was rescanned as prose. Every
+  literal therefore produced one hit labelled `code` and one labelled `prose`,
+  the second re-annotating the line the first had annotated. Every agent reading
+  a hit count off `credence_scan` read double. Pass 2 now walks the matches by
+  span, which is the same walk `ContextManager._scan_output` already did.
+- **Prose was reported but never annotated.** Pass 2 assembled its output into a
+  local named `prose_out`, never read it, and returned the code-pass text — so a
+  value found in prose appeared in `hits` and was left unannotated in the text,
+  half of what the tool documents. The assembled text is now returned.
+- **`credence-server` told users to run a command that cannot work.** Its error
+  message said `pip install 'credence-ai[mcp]'`: the `[mcp]` extra was
+  deliberately removed when fastmcp became a hard dependency, and the
+  distribution is named `credence-enforce`. Reaching that path now means a
+  broken install, not a missing extra, and the message says so.
 - **A failed registration in the observer was swallowed, so inert enforcement
   looked like a quiet conversation.** `observe()` ended in
   `except Exception: return False`, which made the worst outcome indistinguishable
@@ -192,6 +238,17 @@ package metadata changed; the import package is still `credence`.
   said 829 against 898 actual.
 
 ### Added
+- `tests/unit/test_providers.py` — first coverage for `credence/providers.py`,
+  which had none: importing the module must not require `requests`, a missing
+  `requests` must name the extra that provides it, and `make_client` must refuse
+  to guess when no key is available. Pinned by mutation: restoring the
+  module-level import fails all four checks.
+- `tests/unit/test_scan_annotation.py` — first pytest coverage for the annotation
+  path: one fenced literal yields exactly one hit and one marker, an already
+  annotated line is not annotated again, and prose outside a code block is still
+  annotated and reported. Pinned by mutation: restoring the dead guard fails A2.
+- A `legacy-suite` CI job runs `python tests/tests.py`, so its 304 checks are a
+  gate rather than a side effect of collection.
 - `matching.events_file()` / `matching.log_event()` — one definition of where
   the event log lives and one writer for it, so the hooks that append and the
   commands that read cannot drift apart. O10 in `tests/unit/test_observer.py`

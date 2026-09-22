@@ -38,6 +38,10 @@ dependencies = [
 [project.optional-dependencies]
 api = [
     "anthropic>=0.40.0",
+    # credence/providers.py needs this for the hf and groq clients. It was
+    # imported at module scope without being declared anywhere, so a clean
+    # install could not import credence.providers at all.
+    "requests>=2.28",
 ]
 demo = [
     "streamlit>=1.30.0",
@@ -47,6 +51,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "anthropic>=0.40.0",
+    "requests>=2.28",
 ]
 
 [project.scripts]

@@ -15,7 +15,27 @@ from __future__ import annotations
 import os
 import time
 import json
-import requests
+
+
+def _requests():
+    """The ``requests`` module, imported on first use.
+
+    Mirrors how ``anthropic`` is handled in :func:`make_client`: the SDK a
+    provider needs is imported when that provider is used, not when this module
+    is imported. This import used to sit at module scope while ``requests`` was
+    not declared in pyproject.toml at all, so ``import credence.providers``
+    raised ModuleNotFoundError on a clean install — which is what made the
+    legacy suite's S22 and S23 suites blanket-fail 14 checks in CI. It is now
+    declared in the ``api`` extra, and the failure names it if it is absent.
+    """
+    try:
+        import requests
+    except ImportError as exc:  # pragma: no cover - depends on install extras
+        raise ImportError(
+            "The hf and groq providers need `requests`. Install it with: "
+            "pip install 'credence-enforce[api]'"
+        ) from exc
+    return requests
 
 # ---------------------------------------------------------------------------
 # HuggingFace model names
@@ -76,6 +96,7 @@ class _OAIClient:
         max_tokens: int = 300,
         **_kwargs,
     ) -> _Response:
+        requests = _requests()
         oai_msgs: list[dict] = []
         if system:
             oai_msgs.append({"role": "system", "content": system})
