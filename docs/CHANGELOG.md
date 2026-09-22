@@ -169,10 +169,38 @@ package metadata changed; the import package is still `credence`.
   made" — which is how a test that cannot fail comes to look like a test. The
   job now installs Python and runs it, and the failures above are what came
   back.
+- **A failed registration in the observer was swallowed, so inert enforcement
+  looked like a quiet conversation.** `observe()` ended in
+  `except Exception: return False`, which made the worst outcome indistinguishable
+  from the best one: an unwritable registry registered nothing, the gate
+  downstream found nothing to enforce, every write was allowed, and nothing
+  anywhere said so. The exit code contract is unchanged — the observer still
+  returns 0, because failing a user's prompt is not its job — but the failure
+  now reaches stderr, which Claude Code surfaces, and the event log, which
+  `credence stats` reads. This is the third time this module's silence hid the
+  same class of problem (a fresh install that registered nothing; layers that
+  disagreed about the registry path).
+- **The event log path was written in three places and read in one.**
+  `~/.credence/events.jsonl` was an inline `expanduser` string in `hooks.py`,
+  `credence stats`, and `credence feedback` — so a writer and a reader could
+  disagree about the file and the only symptom would be "no events yet". That
+  is the same failure `resolve_db_path` already removes for the registry. The
+  path is now `matching.events_file()` and the writer is `matching.log_event()`,
+  resolved per call rather than at import, because the hooks run as fresh
+  subprocesses where `$HOME` is whatever the caller set.
 - Docs: license badge said MIT while the project ships Apache 2.0; test counts
   said 829 against 898 actual.
 
 ### Added
+- `matching.events_file()` / `matching.log_event()` — one definition of where
+  the event log lives and one writer for it, so the hooks that append and the
+  commands that read cannot drift apart. O10 in `tests/unit/test_observer.py`
+  fails if a second copy of the path comes back.
+- `tests/unit/test_observer.py` O9 — a registration that fails must be reported.
+  Points `CREDENCE_DB` at a directory sqlite cannot create, then asserts the
+  exit code is still 0 *and* that the failure reached both stderr and the event
+  log. Without it, the swallowed-exception version passes every other observer
+  test in the file.
 - `credence/matching.py` — canonical constraint matcher, with
   `tests/unit/test_matching.py` pinning its synonym map to
   `context_manager._CE_DOMAIN_SYNONYMS` so the two cannot silently diverge.

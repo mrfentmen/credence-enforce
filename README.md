@@ -177,7 +177,7 @@ Validated across 7 open-weight models (Qwen, Mistral, Llama, Phi, Gemma) from 5 
 credence demo                     # smoke test, no API key
 credence stats                    # false-positive rate from real gate usage
 credence feedback 1|2|3           # tag last gate block: correct / noise / skip
-python3 -m pytest tests/ -q       # 970 tests, 9 skipped, no API key required
+python3 -m pytest tests/ -q       # 972 tests, 9 skipped, no API key required
 python3 -m evals.latency_report   # P50/P95/P99
 ```
 
@@ -200,7 +200,7 @@ credence/         pip-installable package
   mcp_server.py   17-tool MCP server
   registry.py     SQLite constraint store
   memory.py       cross-session persistence
-tests/            970 tests, 9 skipped, no API key required
+tests/            972 tests, 9 skipped, no API key required
                   (the 9 skips are the Rust gate parity tests, which need a
                   built `credence_gate` binary — CI builds it and runs them)
 evals/            validation studies + multi-model benchmarks

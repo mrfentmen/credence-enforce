@@ -65,7 +65,9 @@ argument at the call site.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
+import json
 import os
 import re
 
@@ -482,3 +484,44 @@ def resolve_db_path() -> str:
         if value:
             return value
     return DEFAULT_DB_PATH
+
+
+# ---------------------------------------------------------------------------
+# Event log — one path, one writer
+# ---------------------------------------------------------------------------
+# `~/.credence/events.jsonl` was spelled out in three places: the hook that
+# appends to it, and `credence stats` and `credence feedback`, each as its own
+# inline `expanduser` string. A path written in one place and read in another
+# is how "no events yet" comes to mean "you are reading a different file than
+# the one being written" — the same failure this module already removes for the
+# registry. It resolves this too, and the observer uses the same entry point so
+# a registration that fails is visible in `credence stats` rather than nowhere.
+
+
+def events_file() -> str:
+    """Path to the local event log.
+
+    Resolved per call rather than at import: the hooks run as fresh
+    subprocesses, where ``$HOME`` is whatever the caller set, and a value
+    captured at import is the one thing that cannot follow that.
+    """
+    return os.path.join(os.path.expanduser("~"), ".credence", "events.jsonl")
+
+
+def log_event(event: dict) -> None:
+    """Append one event to the local event log. Never raises.
+
+    Logging sits inside the enforcement path, so it must not be able to break
+    it: set ``CREDENCE_NO_LOG=1`` to disable, and any failure is swallowed
+    after the attempt.
+    """
+    if os.environ.get("CREDENCE_NO_LOG"):
+        return
+    try:
+        path = events_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        event["ts"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with open(path, "a") as fh:
+            fh.write(json.dumps(event) + "\n")
+    except Exception:
+        pass  # logging must never break the gate

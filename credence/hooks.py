@@ -52,7 +52,6 @@ Exit codes:
 
 from __future__ import annotations
 
-import datetime
 import json
 import os
 import re
@@ -61,6 +60,7 @@ import sys
 from credence.matching import (
     evaluate_constraints,
     is_enforced_tool,
+    log_event,
     resolve_db_path,
     resolve_session_id,
 )
@@ -70,23 +70,14 @@ from credence.matching import (
 # Event log — ~/.credence/events.jsonl
 # Every gate fire is logged so false-positive rate can be measured.
 # Run `credence stats` to see signal quality from real usage.
+## The path and the writer live in credence/matching.py, because this module and
+# the observer both append and __main__.py reads. This file carried its own
+# `_EVENTS_DIR` / `_EVENTS_FILE` pair, which is a copy of a location that
+# already existed twice more.
 # ---------------------------------------------------------------------------
-_EVENTS_DIR  = os.path.expanduser("~/.credence")
-_EVENTS_FILE = os.path.join(_EVENTS_DIR, "events.jsonl")
 
 
-def _log_event(event: dict) -> None:
-    """Append one event to the local events log. Never raises.
-    Set CREDENCE_NO_LOG=1 to disable entirely."""
-    if os.environ.get("CREDENCE_NO_LOG"):
-        return
-    try:
-        os.makedirs(_EVENTS_DIR, exist_ok=True)
-        event["ts"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        with open(_EVENTS_FILE, "a") as fh:
-            fh.write(json.dumps(event) + "\n")
-    except Exception:
-        pass  # logging must never break the gate
+
 
 # Overlap scoring, stopwords, thresholds, and session identity all live in
 # credence/matching.py. This module used to carry its own weaker copy, which
@@ -180,7 +171,7 @@ def main() -> int:
         })
 
     if not blocking:
-        _log_event({
+        log_event({
             "event":       "allow",
             "tool_name":   tool_name,
             "session_id":  session_id,
@@ -201,7 +192,7 @@ def main() -> int:
     ]
     print("\n".join(lines), file=sys.stderr)
 
-    _log_event({
+    log_event({
         "event":      "block",
         "tool_name":  tool_name,
         "session_id": session_id,

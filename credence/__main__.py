@@ -199,9 +199,12 @@ class StripeClient:
 
 
 def run_feedback(tag: str) -> None:
-    """Tag the last gate block in ~/.credence/events.jsonl as useful/noise/skip."""
+    """Tag the last gate block in the event log as useful/noise/skip."""
     import json as _json
-    events_file = os.path.expanduser("~/.credence/events.jsonl")
+
+    from credence.matching import events_file
+
+    events_file = events_file()
 
     if not os.path.exists(events_file):
         print("No gate events recorded yet. Run credence in a real session first.")
@@ -229,9 +232,12 @@ def run_feedback(tag: str) -> None:
 
 
 def run_stats() -> None:
-    """Print false-positive rate from ~/.credence/events.jsonl."""
+    """Print false-positive rate from the event log."""
     import json as _json
-    events_file = os.path.expanduser("~/.credence/events.jsonl")
+
+    from credence.matching import events_file
+
+    events_file = events_file()
 
     if not os.path.exists(events_file):
         print("No events yet. Install the hook and use Credence in a real session.")

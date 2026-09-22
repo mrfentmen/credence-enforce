@@ -35,7 +35,10 @@ The registry is created on first real registration rather than requiring the
 database to already exist. Previously a fresh install registered nothing at
 all: the hook read a path that no one had created yet and returned early.
 
-Exit codes: always 0 — observer never blocks.
+Exit codes: always 0 — observer never blocks. A registration that fails still
+returns 0, because failing a user's prompt is not this hook's job; it reports
+the failure on stderr and in the event log instead, so an inert registry is
+visible rather than silent.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ import json
 import re
 import sys
 
-from credence.matching import resolve_db_path, resolve_session_id
+from credence.matching import log_event, resolve_db_path, resolve_session_id
 
 
 # ── Uncertainty markers — authoritative copy lives in context_manager.py.
@@ -142,6 +145,33 @@ def _classify(text: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _report_failure(exc: Exception, db_path: str) -> None:
+    """Surface a failed registration instead of swallowing it.
+
+    This hook's contract is that it exits 0 — it must never block a prompt.
+    That is a statement about the exit code, not about silence, and swallowing
+    the exception made the worst outcome look like the best one: an unwritable
+    registry registers nothing, the gate downstream finds nothing to enforce,
+    and enforcement is inert with nothing anywhere saying so. That is the same
+    failure this module has already been fixed for twice — a fresh install
+    that registered nothing, and layers that disagreed about the registry
+    path — so the diagnostic goes where the person who can fix it will see it.
+    Stderr, because Claude Code surfaces it, and the event log, because
+    `credence stats` reads it.
+    """
+    print(
+        f"credence observer: could not register a constraint "
+        f"({type(exc).__name__}: {exc}) — registry {db_path}",
+        file=sys.stderr,
+    )
+    log_event({
+        "event": "observer_error",
+        "error": type(exc).__name__,
+        "detail": str(exc)[:200],
+        "registry": db_path,
+    })
+
+
 def observe(text: str, session_id: str, db_path: str) -> bool:
     """
     Inspect a text fragment and register it if uncertain.
@@ -167,7 +197,8 @@ def observe(text: str, session_id: str, db_path: str) -> bool:
             constraint_type="observation",
         )
         return True
-    except Exception:
+    except Exception as exc:
+        _report_failure(exc, db_path)
         return False
 
 

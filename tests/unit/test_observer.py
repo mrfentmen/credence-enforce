@@ -13,16 +13,20 @@ Coverage:
   O6  Payload extraction: string prompt
   O7  Payload extraction: multi-part content list
   O8  Observer exit code is always 0
+  O9  A failed registration is reported, not swallowed   [regression]
+  O10 The event log path is single-sourced
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(ROOT))
-
 import pytest
 from credence.observer import _classify, _extract_text
+
+# Repo root only — tests/conftest.py already puts it on sys.path for imports.
+# Used as the cwd for subprocesses, which is how Claude Code runs the hooks.
+ROOT = Path(__file__).parent.parent.parent
 
 
 # ── O1: Explicit uncertainty markers ─────────────────────────────────────────
@@ -99,8 +103,10 @@ def test_kaggle_url_no_ghost():
 
 def test_very_short_string_no_registration():
     # Text under 12 chars is skipped before classification
+    import os
+    import tempfile
+
     from credence.observer import observe
-    import tempfile, os
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db = f.name
     os.unlink(db)  # don't actually create DB — observe() should short-circuit
@@ -148,7 +154,8 @@ def test_extract_multipart_content():
 
 def test_observer_never_blocks(tmp_path):
     """Observer exit code must always be 0 — it detects, never enforces."""
-    import subprocess, json
+    import json
+
     payload = json.dumps({"prompt": "I think the rate limit is 50 req/min."})
     result = subprocess.run(
         [sys.executable, "-m", "credence.observer"],
@@ -158,3 +165,88 @@ def test_observer_never_blocks(tmp_path):
         cwd=str(ROOT),
     )
     assert result.returncode == 0, f"Observer blocked when it should not: {result.stderr}"
+
+
+# ── O9: a failed registration is reported ────────────────────────────────────
+
+def test_registration_failure_is_reported_not_swallowed(tmp_path):
+    """Regression: `except Exception: return False` made the worst outcome
+    look like the best one.
+
+    An unwritable registry registers nothing, so the gate downstream finds
+    nothing to enforce and enforcement is inert — with nothing anywhere saying
+    so. The exit code must still be 0 (O8: this hook never blocks a prompt),
+    but the failure has to be visible, on stderr and in the event log.
+
+    The registry path points into a directory that does not exist, which
+    sqlite3 cannot create, so the registration raises.
+    """
+    import json
+
+    # HOME is redirected so the event log lands in tmp_path, where this test
+    # can read it back. events_file() resolves per call, so a subprocess with a
+    # different HOME writes to that HOME's log — which is why it is not a
+    # module-level constant.
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "HOME": str(tmp_path),
+        "CREDENCE_DB": str(tmp_path / "missing" / "deeper" / "registry.db"),
+    }
+    payload = json.dumps({
+        "prompt": "I think the Stripe rate limit is around 100 req/min",
+    })
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "credence.observer"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        env=env,
+    )
+
+    assert proc.returncode == 0, (
+        f"the observer must still never block a prompt; stderr: {proc.stderr[:400]}"
+    )
+    assert "could not register" in proc.stderr, (
+        "a failed registration was swallowed again — the observer must say so, "
+        f"or inert enforcement is indistinguishable from a quiet conversation\n"
+        f"stderr: {proc.stderr[:400]}"
+    )
+
+    events = tmp_path / ".credence" / "events.jsonl"
+    assert events.exists(), "the failure reached stderr but not the event log"
+    entries = [json.loads(line) for line in events.read_text().splitlines() if line.strip()]
+    assert any(e.get("event") == "observer_error" for e in entries), (
+        f"no observer_error in the event log; got {[e.get('event') for e in entries]}"
+    )
+
+
+# ── O10: one event-log path ──────────────────────────────────────────────────
+
+def test_event_log_path_is_single_sourced():
+    """The location was written in three places and read in one.
+
+    `~/.credence/events.jsonl` appeared in hooks.py (which appends), and in
+    `credence stats` and `credence feedback` (which read) as their own inline
+    `expanduser` strings. A path written in one place and read in another is
+    how "no events yet" comes to mean "you are reading a different file than
+    the one being written" — the same failure class already fixed for the
+    registry. This fails if a copy comes back.
+    """
+    offenders = []
+    for path in sorted((ROOT / "credence").glob("*.py")):
+        if path.name == "matching.py":
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            # Comments and docstrings may name the file — that is documentation,
+            # not a second copy of the location. Only code counts.
+            if line.strip().startswith("#"):
+                continue
+            if ".credence/events.jsonl" in line or '".credence", "events.jsonl"' in line:
+                offenders.append(f"{path.name}:{lineno}")
+    assert not offenders, (
+        f"{offenders} hard-code the event log path — it is defined once, in "
+        f"credence/matching.py::events_file(), so the writer and the readers "
+        f"cannot drift apart"
+    )
