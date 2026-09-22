@@ -27,6 +27,7 @@ Coverage:
   X3 It allows the same writes the Python hook allows
   X4 It honours CREDENCE_DB — the variable hooks.py, observer.py, and the
      README all use [regression]
+  X5 It reads each gated tool's real payload shape, not just top-level strings
 """
 
 import json
@@ -37,7 +38,7 @@ import pytest
 
 from credence import matching
 from credence.registry import CredenceRegistry
-from tests.unit.test_matcher_parity import CORPUS
+from tests.unit.test_matcher_parity import CORPUS, TOOL_PAYLOADS, UNRELATED_PAYLOADS
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 RUST_BIN = ROOT / "credence_gate" / "target" / "release" / "credence-gate"
@@ -149,4 +150,52 @@ def test_rust_gate_honours_credence_db(tmp_path):
     assert proc.returncode == 2, (
         "the Rust gate did not find the constraint via CREDENCE_DB — it "
         f"exited {proc.returncode} instead of blocking"
+    )
+
+
+# ── X5 ───────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("tool", sorted(TOOL_PAYLOADS))
+def test_rust_gate_reads_every_tool_payload_shape(tmp_path, tool):
+    """Regression: the gate scanned only top-level string values.
+
+    `extract_arguments_text` mapped over the object's values and kept the ones
+    that were strings, so anything nested — an array of edits, an object — was
+    dropped before matching. `MultiEdit` carries its text in `edits`, an array
+    of objects, so for that tool the gate saw the file path and nothing else
+    and allowed the write, while `credence/hooks.py` flattened the same payload
+    recursively and blocked it. Two enforcing paths, two verdicts, and the
+    documented default hook is this binary.
+
+    Driven with the payloads a real call carries, because the corpus above
+    hands both paths the same pre-flattened string and so cannot see a field
+    that was never read.
+    """
+    binary = _binary()
+    db = tmp_path / "registry.db"
+    sid = "rust-payload"
+    CredenceRegistry(db_path=str(db)).register(CONSTRAINT, sid, j_score=0.3, zone="LOW")
+
+    blocking = _run_gate(
+        binary,
+        {"tool_name": tool, "session_id": sid, "tool_input": TOOL_PAYLOADS[tool]},
+        {"CREDENCE_DB": str(db)},
+        tmp_path,
+    )
+    assert blocking.returncode == 2, (
+        f"Rust gate did not block {tool} carrying an unverified value — it "
+        f"exited {blocking.returncode} instead. The Python hook blocks the "
+        f"same payload, so the two paths disagree.\n"
+        f"stderr: {blocking.stderr[:400]}"
+    )
+
+    unrelated = _run_gate(
+        binary,
+        {"tool_name": tool, "session_id": sid, "tool_input": UNRELATED_PAYLOADS[tool]},
+        {"CREDENCE_DB": str(db)},
+        tmp_path,
+    )
+    assert unrelated.returncode == 0, (
+        f"Rust gate blocked {tool} on an unrelated payload "
+        f"(exit {unrelated.returncode})\nstderr: {unrelated.stderr[:400]}"
     )

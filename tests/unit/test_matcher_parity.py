@@ -32,6 +32,7 @@ Coverage:
   P6 The deleted duplicates have not come back
   P7 Every layer resolves the same registry file from the same environment
   P8 Every layer agrees on WHICH TOOLS are gated, and reads are never gated
+  P9 Every gated tool's REAL payload shape reaches the matcher [regression]
 """
 
 import json
@@ -79,6 +80,40 @@ CORPUS = [
     # carried its own synonym expansion, which is the divergence this row pins.
     ("Write throttle = 25", CONSTRAINT, False),
 ]
+
+# The corpus above is one line of text per row. A real tool call is not: it is
+# a `tool_input` object, and the interesting text sits in a field whose name
+# depends on the tool. A gate that matches perfectly but reads the wrong field
+# blocks nothing, which is a separate failure from scoring wrong and is
+# invisible to a test that hands both paths the same pre-flattened string.
+#
+# `MultiEdit` is the case in point: its text lives in `edits`, an array of
+# objects, so anything scanning only top-level string values sees the file path
+# and nothing else. These maps are the payloads a real call carries, with an
+# unverified value embedded; every gated tool must appear in BOTH, so adding a
+# tool to the allowlist without a payload shape here fails the test below.
+TOOL_PAYLOADS = {
+    "Write":        {"file_path": "x.py", "content": "RATE_LIMIT = 100"},
+    "Edit":         {"file_path": "x.py",
+                     "old_string": "RATE_LIMIT = 50",
+                     "new_string": "RATE_LIMIT = 100"},
+    "MultiEdit":    {"file_path": "x.py",
+                     "edits": [{"old_string": "RATE_LIMIT = 50",
+                                "new_string": "RATE_LIMIT = 100"}]},
+    "NotebookEdit": {"notebook_path": "x.ipynb", "new_source": "RATE_LIMIT = 100"},
+    "Bash":         {"command": "sed -i '' 's/50/100/' x.py   # RATE_LIMIT = 100"},
+}
+
+UNRELATED_PAYLOADS = {
+    "Write":        {"file_path": "a.css", "content": "body { color: rebeccapurple }"},
+    "Edit":         {"file_path": "a.css", "old_string": "blue",
+                     "new_string": "rebeccapurple"},
+    "MultiEdit":    {"file_path": "a.css",
+                     "edits": [{"old_string": "blue", "new_string": "rebeccapurple"}]},
+    "NotebookEdit": {"notebook_path": "a.ipynb",
+                     "new_source": "body { color: rebeccapurple }"},
+    "Bash":         {"command": "ls -la"},
+}
 
 
 def _run_hook(payload, db, session_id, env_extra=None, db_var="CREDENCE_DB"):
@@ -476,3 +511,46 @@ def test_documented_matcher_covers_every_enforced_tool(path, needle):
             f"{path} documents matcher alternative(s) {unknown!r} that name no "
             f"enforced tool"
         )
+
+
+# ── P9 ───────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("tool", matching.ENFORCED_TOOLS)
+def test_enforced_tool_payload_shape_reaches_the_gate(tmp_path, tool):
+    """The value has to be READ before it can be matched.
+
+    Every gated tool carries its text in a different field, and one of them
+    (`MultiEdit`) nests it in an array of objects. Extracting only top-level
+    strings returns the file path for that tool, so the matcher never sees the
+    value and the write goes through regardless of how good the scorer is.
+
+    This is the enforcement path a real call takes, so it is asserted through
+    the hook subprocess rather than by calling the scorer directly.
+    """
+    assert tool in TOOL_PAYLOADS and tool in UNRELATED_PAYLOADS, (
+        f"{tool} is gated but has no payload shape in this file — add one, so "
+        f"its extraction is exercised rather than assumed"
+    )
+    db = tmp_path / "payload.db"
+    sid = "payload-session"
+    CredenceRegistry(db_path=str(db)).register(CONSTRAINT, sid, j_score=0.3, zone="LOW")
+
+    blocking = _run_hook(
+        {"hook_event_name": "PreToolUse", "session_id": sid,
+         "tool_name": tool, "tool_input": TOOL_PAYLOADS[tool]},
+        db, sid,
+    )
+    assert blocking.returncode == 2, (
+        f"{tool} carried an unverified value and was not blocked "
+        f"(exit {blocking.returncode})\nstderr: {blocking.stderr[:400]}"
+    )
+
+    unrelated = _run_hook(
+        {"hook_event_name": "PreToolUse", "session_id": sid,
+         "tool_name": tool, "tool_input": UNRELATED_PAYLOADS[tool]},
+        db, sid,
+    )
+    assert unrelated.returncode == 0, (
+        f"{tool} carried an unrelated payload and was blocked "
+        f"(exit {unrelated.returncode})\nstderr: {unrelated.stderr[:400]}"
+    )
